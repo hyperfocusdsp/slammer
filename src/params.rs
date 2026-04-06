@@ -1,0 +1,577 @@
+//! All parameter definitions for Slammer.
+//!
+//! This module owns two closely-related types:
+//!
+//! * [`SlammerParams`] — the live, host-visible nih_plug parameter tree.
+//! * [`ParamSnapshot`] — a plain-data mirror used for preset round-tripping.
+//!
+//! Adding a new automatable parameter means touching exactly three places
+//! in this file:
+//!
+//! 1. A field on `SlammerParams` (with its `#[id = "..."]` attribute).
+//! 2. Its construction in `impl Default for SlammerParams`.
+//! 3. A field on `ParamSnapshot` plus matching lines in `capture`/`apply`.
+//!
+//! Builder helpers (`hz_knob`, `ms_knob`, `pct_knob`, `db_knob`) collapse
+//! the most repetitive boilerplate in the `Default` impl so the parameter
+//! definitions read as a flat table rather than a wall of chained
+//! `FloatParam::new(...).with_unit(...).with_value_to_string(...)` calls.
+
+use nih_plug::prelude::*;
+use nih_plug_egui::EguiState;
+use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use crate::sequencer::DEFAULT_STEP_BITS;
+
+// ---------------------------------------------------------------------------
+// Param-builder helpers
+// ---------------------------------------------------------------------------
+
+/// Frequency knob in Hz, rounded integer display, skewed range.
+fn hz_knob(name: &str, default: f32, min: f32, max: f32, skew: f32) -> FloatParam {
+    FloatParam::new(
+        name,
+        default,
+        FloatRange::Skewed {
+            min,
+            max,
+            factor: FloatRange::skew_factor(skew),
+        },
+    )
+    .with_unit(" Hz")
+    .with_value_to_string(formatters::v2s_f32_rounded(0))
+}
+
+/// Time knob in milliseconds, rounded integer display, skewed range.
+fn ms_knob(name: &str, default: f32, min: f32, max: f32, skew: f32) -> FloatParam {
+    FloatParam::new(
+        name,
+        default,
+        FloatRange::Skewed {
+            min,
+            max,
+            factor: FloatRange::skew_factor(skew),
+        },
+    )
+    .with_unit(" ms")
+    .with_value_to_string(formatters::v2s_f32_rounded(0))
+}
+
+/// Linear 0..1 knob displayed as a whole-number percentage.
+fn pct_knob(name: &str, default: f32) -> FloatParam {
+    FloatParam::new(name, default, FloatRange::Linear { min: 0.0, max: 1.0 })
+        .with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0)))
+}
+
+/// Gain knob with a dB-skewed range and dB display/parse round-trip.
+fn db_knob(name: &str, default_db: f32, min_db: f32, max_db: f32) -> FloatParam {
+    FloatParam::new(
+        name,
+        util::db_to_gain(default_db),
+        FloatRange::Skewed {
+            min: util::db_to_gain(min_db),
+            max: util::db_to_gain(max_db),
+            factor: FloatRange::gain_skew_factor(min_db, max_db),
+        },
+    )
+    .with_smoother(SmoothingStyle::Logarithmic(10.0))
+    .with_unit(" dB")
+    .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
+    .with_string_to_value(formatters::s2v_f32_gain_to_db())
+}
+
+// ---------------------------------------------------------------------------
+// Live parameter tree
+// ---------------------------------------------------------------------------
+
+#[derive(Params)]
+pub struct SlammerParams {
+    #[persist = "editor-state"]
+    pub editor_state: Arc<EguiState>,
+
+    /// 16-step sequencer pattern as a bitmask (bit i = step i on).
+    /// Persisted by nih-plug for both DAW project state and standalone
+    /// session state. The audio thread never touches this — the UI
+    /// thread keeps it in sync with the live `Sequencer` atomics via
+    /// `toggle_step` / `set_step`, and `Plugin::initialize()` copies it
+    /// back into the atomics on load.
+    #[persist = "seq_steps"]
+    pub seq_steps: Arc<Mutex<u16>>,
+
+    #[id = "master_vol"]
+    pub master_volume: FloatParam,
+
+    #[id = "decay"]
+    pub decay_ms: FloatParam,
+
+    #[id = "vel_sens"]
+    pub velocity_sens: FloatParam,
+
+    // --- SUB layer ---
+    #[id = "sub_gain"]
+    pub sub_gain: FloatParam,
+
+    #[id = "sub_fstart"]
+    pub sub_fstart: FloatParam,
+
+    #[id = "sub_fend"]
+    pub sub_fend: FloatParam,
+
+    #[id = "sub_sweep"]
+    pub sub_sweep_ms: FloatParam,
+
+    #[id = "sub_curve"]
+    pub sub_sweep_curve: FloatParam,
+
+    /// Sub phase offset in degrees (DSP layer converts to radians).
+    #[id = "sub_phase"]
+    pub sub_phase_offset: FloatParam,
+
+    // --- MID layer ---
+    #[id = "mid_gain"]
+    pub mid_gain: FloatParam,
+
+    #[id = "mid_fstart"]
+    pub mid_fstart: FloatParam,
+
+    #[id = "mid_fend"]
+    pub mid_fend: FloatParam,
+
+    #[id = "mid_sweep"]
+    pub mid_sweep_ms: FloatParam,
+
+    #[id = "mid_curve"]
+    pub mid_sweep_curve: FloatParam,
+
+    /// Mid phase offset in degrees (DSP layer converts to radians).
+    #[id = "mid_phase"]
+    pub mid_phase_offset: FloatParam,
+
+    #[id = "mid_decay"]
+    pub mid_decay_ms: FloatParam,
+
+    #[id = "mid_tone"]
+    pub mid_tone_gain: FloatParam,
+
+    #[id = "mid_noise"]
+    pub mid_noise_gain: FloatParam,
+
+    #[id = "mid_noise_col"]
+    pub mid_noise_color: FloatParam,
+
+    // --- TOP layer ---
+    #[id = "top_gain"]
+    pub top_gain: FloatParam,
+
+    #[id = "top_decay"]
+    pub top_decay_ms: FloatParam,
+
+    #[id = "top_freq"]
+    pub top_freq: FloatParam,
+
+    #[id = "top_bw"]
+    pub top_bw: FloatParam,
+
+    // --- Drift ---
+    #[id = "drift"]
+    pub drift_amount: FloatParam,
+
+    // --- Saturation ---
+    #[id = "sat_mode"]
+    pub sat_mode: FloatParam,
+
+    #[id = "sat_drive"]
+    pub sat_drive: FloatParam,
+
+    #[id = "sat_mix"]
+    pub sat_mix: FloatParam,
+
+    // --- Master EQ ---
+    #[id = "eq_tilt"]
+    pub eq_tilt_db: FloatParam,
+
+    #[id = "eq_low"]
+    pub eq_low_boost_db: FloatParam,
+
+    #[id = "eq_notch_f"]
+    pub eq_notch_freq: FloatParam,
+
+    #[id = "eq_notch_q"]
+    pub eq_notch_q: FloatParam,
+
+    #[id = "eq_notch_d"]
+    pub eq_notch_depth_db: FloatParam,
+
+    // --- Compressor / Limiter (master bus dynamics) ---
+    #[id = "comp_amount"]
+    pub comp_amount: FloatParam,
+
+    #[id = "comp_react"]
+    pub comp_react: FloatParam,
+
+    #[id = "comp_drive"]
+    pub comp_drive: FloatParam,
+
+    #[id = "comp_limit"]
+    pub comp_limit_on: BoolParam,
+}
+
+impl Default for SlammerParams {
+    fn default() -> Self {
+        Self {
+            editor_state: EguiState::from_size(680, 444), // matches BASE_W x BASE_H (1:1 default)
+
+            seq_steps: Arc::new(Mutex::new(DEFAULT_STEP_BITS)),
+
+            master_volume: db_knob("Master Volume", 0.0, -60.0, 6.0),
+
+            decay_ms: ms_knob("Decay", 400.0, 50.0, 3000.0, -1.5)
+                .with_smoother(SmoothingStyle::Linear(20.0)),
+
+            velocity_sens: FloatParam::new(
+                "Velocity Sens",
+                0.8,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+
+            // --- SUB ---
+            sub_gain: FloatParam::new("Sub Gain", 0.85, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(10.0)),
+
+            sub_fstart: hz_knob("Sub Pitch Start", 150.0, 20.0, 800.0, -2.0),
+            sub_fend: hz_knob("Sub Pitch End", 45.0, 20.0, 400.0, -1.5),
+            sub_sweep_ms: ms_knob("Sub Sweep", 60.0, 5.0, 500.0, -1.5),
+
+            sub_sweep_curve: FloatParam::new(
+                "Sub Curve",
+                3.0,
+                FloatRange::Skewed {
+                    min: 0.1,
+                    max: 12.0,
+                    factor: FloatRange::skew_factor(-0.5),
+                },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            sub_phase_offset: FloatParam::new(
+                "Sub Phase",
+                90.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 360.0,
+                },
+            )
+            .with_unit("°")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
+
+            // --- MID ---
+            mid_gain: FloatParam::new("Mid Gain", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(10.0)),
+
+            mid_fstart: hz_knob("Mid Pitch Start", 400.0, 100.0, 2000.0, -1.5),
+            mid_fend: hz_knob("Mid Pitch End", 120.0, 50.0, 800.0, -1.5),
+            mid_sweep_ms: ms_knob("Mid Sweep", 30.0, 3.0, 300.0, -1.5),
+
+            mid_sweep_curve: FloatParam::new(
+                "Mid Curve",
+                4.0,
+                FloatRange::Skewed {
+                    min: 0.1,
+                    max: 12.0,
+                    factor: FloatRange::skew_factor(-0.5),
+                },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            mid_phase_offset: FloatParam::new(
+                "Mid Phase",
+                90.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 360.0,
+                },
+            )
+            .with_unit("°")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
+
+            mid_decay_ms: ms_knob("Mid Decay", 150.0, 20.0, 1000.0, -1.5),
+
+            mid_tone_gain: FloatParam::new(
+                "Mid Tone",
+                0.7,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+            mid_noise_gain: FloatParam::new(
+                "Mid Noise",
+                0.3,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+            mid_noise_color: FloatParam::new(
+                "Mid Noise Color",
+                0.4,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+
+            // --- TOP ---
+            top_gain: FloatParam::new("Top Gain", 0.25, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(10.0)),
+
+            top_decay_ms: FloatParam::new(
+                "Top Decay",
+                6.0,
+                FloatRange::Skewed {
+                    min: 1.0,
+                    max: 50.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_unit(" ms")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            top_freq: hz_knob("Top Freq", 3500.0, 1000.0, 8000.0, -1.0),
+
+            top_bw: FloatParam::new("Top BW", 1.5, FloatRange::Linear { min: 0.2, max: 3.0 })
+                .with_unit(" oct")
+                .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            // --- Drift ---
+            drift_amount: pct_knob("Drift", 0.0),
+
+            // --- Saturation ---
+            sat_mode: FloatParam::new("Sat Mode", 0.0, FloatRange::Linear { min: 0.0, max: 3.0 })
+                .with_step_size(1.0)
+                .with_value_to_string(Arc::new(|v| match v as u8 {
+                    1 => "Soft".into(),
+                    2 => "Diode".into(),
+                    3 => "Tape".into(),
+                    _ => "Off".into(),
+                })),
+
+            sat_drive: pct_knob("Sat Drive", 0.0),
+            sat_mix: pct_knob("Sat Mix", 1.0),
+
+            // --- EQ ---
+            eq_tilt_db: FloatParam::new(
+                "EQ Tilt",
+                0.0,
+                FloatRange::Linear {
+                    min: -6.0,
+                    max: 6.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            eq_low_boost_db: FloatParam::new(
+                "EQ Low Boost",
+                0.0,
+                FloatRange::Linear {
+                    min: -3.0,
+                    max: 9.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            eq_notch_freq: hz_knob("EQ Notch Freq", 250.0, 100.0, 600.0, -1.0),
+
+            eq_notch_q: FloatParam::new(
+                "EQ Notch Q",
+                0.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 10.0,
+                },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            eq_notch_depth_db: FloatParam::new(
+                "EQ Notch Depth",
+                12.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 20.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
+
+            // --- Compressor ---
+            // Defaults chosen so a fresh instance is bit-identical to the
+            // pre-compressor build: amount = 0 and limiter off together
+            // hit the bypass branch in `plugin.rs`.
+            comp_amount: pct_knob("Comp Amount", 0.0)
+                .with_smoother(SmoothingStyle::Linear(10.0)),
+            comp_react: pct_knob("Comp React", 0.35)
+                .with_smoother(SmoothingStyle::Linear(10.0)),
+            comp_drive: pct_knob("Comp Drive", 0.0)
+                .with_smoother(SmoothingStyle::Linear(10.0)),
+            comp_limit_on: BoolParam::new("Comp Limiter", false),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Plain-data snapshot for preset round-tripping
+// ---------------------------------------------------------------------------
+
+/// Plain-data mirror of every automatable parameter in `SlammerParams`.
+///
+/// Captures and applies via `ParamSetter` so host automation/undo see the
+/// changes. `master_volume` and `editor_state` are intentionally **not**
+/// persisted: master volume is treated as a user-facing level control, and
+/// the editor state is handled by nih_plug's `#[persist]` mechanism.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ParamSnapshot {
+    pub decay_ms: f32,
+    pub velocity_sens: f32,
+
+    pub sub_gain: f32,
+    pub sub_fstart: f32,
+    pub sub_fend: f32,
+    pub sub_sweep_ms: f32,
+    pub sub_sweep_curve: f32,
+    pub sub_phase_offset: f32,
+
+    pub mid_gain: f32,
+    pub mid_fstart: f32,
+    pub mid_fend: f32,
+    pub mid_sweep_ms: f32,
+    pub mid_sweep_curve: f32,
+    pub mid_phase_offset: f32,
+    pub mid_decay_ms: f32,
+    pub mid_tone_gain: f32,
+    pub mid_noise_gain: f32,
+    pub mid_noise_color: f32,
+
+    pub top_gain: f32,
+    pub top_decay_ms: f32,
+    pub top_freq: f32,
+    pub top_bw: f32,
+
+    pub drift_amount: f32,
+
+    pub sat_mode: f32,
+    pub sat_drive: f32,
+    pub sat_mix: f32,
+
+    pub eq_tilt_db: f32,
+    pub eq_low_boost_db: f32,
+    pub eq_notch_freq: f32,
+    pub eq_notch_q: f32,
+    pub eq_notch_depth_db: f32,
+
+    pub comp_amount: f32,
+    pub comp_react: f32,
+    pub comp_drive: f32,
+    pub comp_limit_on: bool,
+}
+
+impl ParamSnapshot {
+    /// Read current values off every persisted param.
+    pub fn capture(p: &SlammerParams) -> Self {
+        Self {
+            decay_ms: p.decay_ms.value(),
+            velocity_sens: p.velocity_sens.value(),
+
+            sub_gain: p.sub_gain.value(),
+            sub_fstart: p.sub_fstart.value(),
+            sub_fend: p.sub_fend.value(),
+            sub_sweep_ms: p.sub_sweep_ms.value(),
+            sub_sweep_curve: p.sub_sweep_curve.value(),
+            sub_phase_offset: p.sub_phase_offset.value(),
+
+            mid_gain: p.mid_gain.value(),
+            mid_fstart: p.mid_fstart.value(),
+            mid_fend: p.mid_fend.value(),
+            mid_sweep_ms: p.mid_sweep_ms.value(),
+            mid_sweep_curve: p.mid_sweep_curve.value(),
+            mid_phase_offset: p.mid_phase_offset.value(),
+            mid_decay_ms: p.mid_decay_ms.value(),
+            mid_tone_gain: p.mid_tone_gain.value(),
+            mid_noise_gain: p.mid_noise_gain.value(),
+            mid_noise_color: p.mid_noise_color.value(),
+
+            top_gain: p.top_gain.value(),
+            top_decay_ms: p.top_decay_ms.value(),
+            top_freq: p.top_freq.value(),
+            top_bw: p.top_bw.value(),
+
+            drift_amount: p.drift_amount.value(),
+
+            sat_mode: p.sat_mode.value(),
+            sat_drive: p.sat_drive.value(),
+            sat_mix: p.sat_mix.value(),
+
+            eq_tilt_db: p.eq_tilt_db.value(),
+            eq_low_boost_db: p.eq_low_boost_db.value(),
+            eq_notch_freq: p.eq_notch_freq.value(),
+            eq_notch_q: p.eq_notch_q.value(),
+            eq_notch_depth_db: p.eq_notch_depth_db.value(),
+
+            comp_amount: p.comp_amount.value(),
+            comp_react: p.comp_react.value(),
+            comp_drive: p.comp_drive.value(),
+            comp_limit_on: p.comp_limit_on.value(),
+        }
+    }
+
+    /// Push every field of the snapshot back into the live params, going
+    /// through `ParamSetter` so host automation/undo see the changes.
+    pub fn apply(&self, setter: &ParamSetter, p: &SlammerParams) {
+        macro_rules! set {
+            ($param:expr, $val:expr) => {
+                setter.begin_set_parameter(&$param);
+                setter.set_parameter(&$param, $val);
+                setter.end_set_parameter(&$param);
+            };
+        }
+        set!(p.decay_ms, self.decay_ms);
+        set!(p.velocity_sens, self.velocity_sens);
+
+        set!(p.sub_gain, self.sub_gain);
+        set!(p.sub_fstart, self.sub_fstart);
+        set!(p.sub_fend, self.sub_fend);
+        set!(p.sub_sweep_ms, self.sub_sweep_ms);
+        set!(p.sub_sweep_curve, self.sub_sweep_curve);
+        set!(p.sub_phase_offset, self.sub_phase_offset);
+
+        set!(p.mid_gain, self.mid_gain);
+        set!(p.mid_fstart, self.mid_fstart);
+        set!(p.mid_fend, self.mid_fend);
+        set!(p.mid_sweep_ms, self.mid_sweep_ms);
+        set!(p.mid_sweep_curve, self.mid_sweep_curve);
+        set!(p.mid_phase_offset, self.mid_phase_offset);
+        set!(p.mid_decay_ms, self.mid_decay_ms);
+        set!(p.mid_tone_gain, self.mid_tone_gain);
+        set!(p.mid_noise_gain, self.mid_noise_gain);
+        set!(p.mid_noise_color, self.mid_noise_color);
+
+        set!(p.top_gain, self.top_gain);
+        set!(p.top_decay_ms, self.top_decay_ms);
+        set!(p.top_freq, self.top_freq);
+        set!(p.top_bw, self.top_bw);
+
+        set!(p.drift_amount, self.drift_amount);
+
+        set!(p.sat_mode, self.sat_mode);
+        set!(p.sat_drive, self.sat_drive);
+        set!(p.sat_mix, self.sat_mix);
+
+        set!(p.eq_tilt_db, self.eq_tilt_db);
+        set!(p.eq_low_boost_db, self.eq_low_boost_db);
+        set!(p.eq_notch_freq, self.eq_notch_freq);
+        set!(p.eq_notch_q, self.eq_notch_q);
+        set!(p.eq_notch_depth_db, self.eq_notch_depth_db);
+
+        set!(p.comp_amount, self.comp_amount);
+        set!(p.comp_react, self.comp_react);
+        set!(p.comp_drive, self.comp_drive);
+        setter.begin_set_parameter(&p.comp_limit_on);
+        setter.set_parameter(&p.comp_limit_on, self.comp_limit_on);
+        setter.end_set_parameter(&p.comp_limit_on);
+    }
+}
