@@ -7,6 +7,8 @@ transformer drive → brickwall limiter → auto tube warmth). Ships with a
 16-step pattern sequencer, a factory + user preset browser, and a fully
 interactive standalone editor.
 
+![Slammer](docs/slammer.png)
+
 **Formats:** VST3, CLAP, Standalone
 **Platforms:** Linux, macOS (Apple Silicon + Intel), Windows
 **License:** GPL-3.0-or-later
