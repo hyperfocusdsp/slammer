@@ -23,7 +23,10 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::sequencer::DEFAULT_STEP_BITS;
+use std::sync::atomic::Ordering;
+
+use crate::dsp::engine::KickParams;
+use crate::sequencer::{DEFAULT_STEP_BITS, STEPS, Sequencer};
 
 // ---------------------------------------------------------------------------
 // Param-builder helpers
@@ -216,6 +219,65 @@ pub struct SlammerParams {
 
     #[id = "comp_limit"]
     pub comp_limit_on: BoolParam,
+
+    // --- Flam (per-step multi-stroke) ---
+    #[id = "flam_spread"]
+    pub flam_spread_ms: FloatParam,
+
+    #[id = "flam_human"]
+    pub flam_humanize: FloatParam,
+}
+
+/// Snapshot the currently-smoothed engine parameters into a flat `KickParams`
+/// struct. Called once per audio block by `plugin.rs` and on-demand by the
+/// offline bounce render in `export/` — centralised here so the two share a
+/// single source of truth.
+///
+/// `master_gain` is intentionally pinned to `1.0`: the master volume knob is
+/// applied **after** the engine in the plugin chain (post-comp, post-warmth)
+/// and the offline exporter mirrors that, so letting the engine apply it too
+/// would double the gain.
+pub fn collect_kick_params(p: &SlammerParams) -> KickParams {
+    KickParams {
+        master_gain: 1.0,
+        decay_ms: p.decay_ms.value(),
+        velocity_sens: p.velocity_sens.value(),
+
+        sub_gain: p.sub_gain.value(),
+        sub_fstart: p.sub_fstart.value(),
+        sub_fend: p.sub_fend.value(),
+        sub_sweep_ms: p.sub_sweep_ms.value(),
+        sub_sweep_curve: p.sub_sweep_curve.value(),
+        sub_phase_offset: p.sub_phase_offset.value().to_radians(),
+
+        mid_gain: p.mid_gain.value(),
+        mid_fstart: p.mid_fstart.value(),
+        mid_fend: p.mid_fend.value(),
+        mid_sweep_ms: p.mid_sweep_ms.value(),
+        mid_sweep_curve: p.mid_sweep_curve.value(),
+        mid_phase_offset: p.mid_phase_offset.value().to_radians(),
+        mid_decay_ms: p.mid_decay_ms.value(),
+        mid_tone_gain: p.mid_tone_gain.value(),
+        mid_noise_gain: p.mid_noise_gain.value(),
+        mid_noise_color: p.mid_noise_color.value(),
+
+        top_gain: p.top_gain.value(),
+        top_decay_ms: p.top_decay_ms.value(),
+        top_freq: p.top_freq.value(),
+        top_bw: p.top_bw.value(),
+
+        drift_amount: p.drift_amount.value(),
+
+        sat_mode: p.sat_mode.value() as u8,
+        sat_drive: p.sat_drive.value(),
+        sat_mix: p.sat_mix.value(),
+
+        eq_tilt_db: p.eq_tilt_db.value(),
+        eq_low_boost_db: p.eq_low_boost_db.value(),
+        eq_notch_freq: p.eq_notch_freq.value(),
+        eq_notch_q: p.eq_notch_q.value(),
+        eq_notch_depth_db: p.eq_notch_depth_db.value(),
+    }
 }
 
 impl Default for SlammerParams {
@@ -409,6 +471,21 @@ impl Default for SlammerParams {
             comp_drive: pct_knob("Comp Drive", 0.0)
                 .with_smoother(SmoothingStyle::Linear(10.0)),
             comp_limit_on: BoolParam::new("Comp Limiter", false),
+
+            // --- Flam ---
+            flam_spread_ms: FloatParam::new(
+                "Flam Spread",
+                15.0,
+                FloatRange::Skewed {
+                    min: 2.0,
+                    max: 30.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_unit(" ms")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            flam_humanize: pct_knob("Flam Humanize", 0.3),
         }
     }
 }
@@ -468,11 +545,15 @@ pub struct ParamSnapshot {
     pub comp_react: f32,
     pub comp_drive: f32,
     pub comp_limit_on: bool,
+
+    pub flam_spread_ms: f32,
+    pub flam_humanize: f32,
+    pub flam_states: [u8; 16],
 }
 
 impl ParamSnapshot {
     /// Read current values off every persisted param.
-    pub fn capture(p: &SlammerParams) -> Self {
+    pub fn capture(p: &SlammerParams, sequencer: &Sequencer) -> Self {
         Self {
             decay_ms: p.decay_ms.value(),
             velocity_sens: p.velocity_sens.value(),
@@ -516,12 +597,16 @@ impl ParamSnapshot {
             comp_react: p.comp_react.value(),
             comp_drive: p.comp_drive.value(),
             comp_limit_on: p.comp_limit_on.value(),
+
+            flam_spread_ms: p.flam_spread_ms.value(),
+            flam_humanize: p.flam_humanize.value(),
+            flam_states: std::array::from_fn(|i| sequencer.flam_state[i].load(Ordering::Relaxed)),
         }
     }
 
     /// Push every field of the snapshot back into the live params, going
     /// through `ParamSetter` so host automation/undo see the changes.
-    pub fn apply(&self, setter: &ParamSetter, p: &SlammerParams) {
+    pub fn apply(&self, setter: &ParamSetter, p: &SlammerParams, sequencer: &Sequencer) {
         macro_rules! set {
             ($param:expr, $val:expr) => {
                 setter.begin_set_parameter(&$param);
@@ -573,5 +658,43 @@ impl ParamSnapshot {
         setter.begin_set_parameter(&p.comp_limit_on);
         setter.set_parameter(&p.comp_limit_on, self.comp_limit_on);
         setter.end_set_parameter(&p.comp_limit_on);
+
+        set!(p.flam_spread_ms, self.flam_spread_ms);
+        set!(p.flam_humanize, self.flam_humanize);
+        for (i, &st) in self.flam_states.iter().enumerate().take(STEPS) {
+            sequencer.flam_state[i].store(st & 0b11, Ordering::Relaxed);
+        }
+    }
+}
+
+#[cfg(test)]
+mod flam_param_tests {
+    use super::*;
+
+    #[test]
+    fn flam_params_defaults() {
+        let p = SlammerParams::default();
+        assert!((p.flam_spread_ms.value() - 15.0).abs() < 1e-4);
+        assert!((p.flam_humanize.value() - 0.3).abs() < 1e-4);
+    }
+
+    #[test]
+    fn param_snapshot_roundtrip_flam() {
+        let mut snap = ParamSnapshot::default();
+        snap.flam_spread_ms = 22.5;
+        snap.flam_humanize = 0.75;
+        snap.flam_states = [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3];
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: ParamSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, snap);
+    }
+
+    #[test]
+    fn old_preset_loads_with_flam_defaults() {
+        let json = r#"{ "decay_ms": 120.0 }"#;
+        let snap: ParamSnapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snap.flam_states, [0u8; 16]);
+        assert_eq!(snap.flam_spread_ms, 0.0);
+        assert_eq!(snap.flam_humanize, 0.0);
     }
 }
