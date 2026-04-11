@@ -15,22 +15,11 @@ interactive standalone editor.
 
 ## Listen
 
-Ten one-shots bounced straight out of the plugin via the BOUNCE button.
-Click any sample to play it in your browser.
+▶ **[Play sound samples in your browser](https://hornfisk.github.io/slammer/)**
 
-**Kicks** &nbsp; · &nbsp;
-[Clean BD](docs/audio/bd_clean.mp3) &nbsp;·&nbsp;
-[Tech BD](docs/audio/bd_tech.mp3) &nbsp;·&nbsp;
-[Hard](docs/audio/hard.mp3) &nbsp;·&nbsp;
-[808](docs/audio/808.mp3) &nbsp;·&nbsp;
-[909](docs/audio/909.mp3)
-
-**Drums** &nbsp; · &nbsp;
-[Snare](docs/audio/sd.mp3) &nbsp;·&nbsp;
-[Clap](docs/audio/clap.mp3) &nbsp;·&nbsp;
-[Low Tom](docs/audio/lowtom.mp3) &nbsp;·&nbsp;
-[High Tom](docs/audio/hitom.mp3) &nbsp;·&nbsp;
-[Hi-Hat](docs/audio/hihat.mp3)
+Ten one-shots bounced straight out of the plugin via the BOUNCE button —
+clean kicks, 808/909 emulations, claps, snares, toms, and hats. No
+download, just hit play.
 
 ## Quick start
 
