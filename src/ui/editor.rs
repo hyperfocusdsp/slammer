@@ -239,6 +239,8 @@ pub fn create(
                         let mut seq_ui = seq_ui_state.lock();
                         panels::draw_sequencer_row(
                             ui,
+                            setter,
+                            &params,
                             panel_rect,
                             sat_eq_bottom_y,
                             &sequencer,

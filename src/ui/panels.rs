@@ -844,13 +844,21 @@ pub fn draw_mid_row(
 }
 
 /// Draw the SAT | EQ row. Returns the bottom y of the row.
+/// Result of drawing the SAT/EQ row. `next_y` is where the following row
+/// should start; `bounce_clicked` reports whether the user clicked BOUNCE
+/// this frame so the caller can kick off a one-shot export.
+pub struct SatEqRowResult {
+    pub next_y: f32,
+    pub bounce_clicked: bool,
+}
+
 pub fn draw_sat_eq_row(
     ui: &mut egui::Ui,
     setter: &ParamSetter,
     params: &SlammerParams,
     panel_rect: egui::Rect,
     mid_bottom_y: f32,
-) -> f32 {
+) -> SatEqRowResult {
     let row_label_y = mid_bottom_y;
     let row_groove_y = row_label_y + 14.0;
     let row_knob_y = row_groove_y + 4.0;
@@ -1000,7 +1008,76 @@ pub fn draw_sat_eq_row(
         });
     });
 
-    row_knob_y + KNOB_SIZE + 30.0
+    // ── BOUNCE button ──
+    // Fills the otherwise-empty right-hand slot of the SAT/EQ row. Exports
+    // one trigger of the current sound to disk as WAV/AIFF; the actual
+    // render + file write is handled by `crate::export::export_one_shot`
+    // in `editor.rs` when the click flag returned here is set.
+    let bounce_clicked = draw_bounce_button(ui, panel_rect, row_knob_y);
+
+    SatEqRowResult {
+        next_y: row_knob_y + KNOB_SIZE + 30.0,
+        bounce_clicked,
+    }
+}
+
+/// Beveled "BOUNCE" button in the right gap of the SAT/EQ row. Styled to
+/// match [`test_button`] so it reads as part of the same visual family.
+/// Returns `true` on the frame the user clicks it.
+fn draw_bounce_button(ui: &mut egui::Ui, panel_rect: egui::Rect, row_knob_y: f32) -> bool {
+    let btn_w = 56.0;
+    let btn_h = 22.0;
+    // Right-align with a small inset so the button doesn't kiss the rack ear.
+    let btn_x = panel_rect.right() - CONTENT_LEFT - btn_w;
+    // Vertically centered on the knob row (same as the knob caps).
+    let btn_y = row_knob_y + (KNOB_SIZE - btn_h) * 0.5 + 4.0;
+    let btn_rect = egui::Rect::from_min_size(egui::pos2(btn_x, btn_y), egui::vec2(btn_w, btn_h));
+
+    let resp = ui.interact(
+        btn_rect,
+        egui::Id::new("export_bounce"),
+        egui::Sense::click(),
+    );
+    let pressed = resp.is_pointer_button_down_on();
+    {
+        let painter = ui.painter();
+        let top_color = if pressed {
+            theme::BTN_DARK
+        } else {
+            theme::BTN_LIGHT
+        };
+        let bot_color = if pressed {
+            theme::BTN_LIGHT
+        } else {
+            theme::BTN_DARK
+        };
+        painter.rect_filled(btn_rect, 3.0, bot_color);
+        painter.rect_filled(
+            egui::Rect::from_min_size(btn_rect.min, egui::vec2(btn_w, btn_h * 0.5)),
+            3.0,
+            top_color,
+        );
+        painter.text(
+            btn_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "BOUNCE",
+            egui::FontId::new(11.0, egui::FontFamily::Monospace),
+            theme::WHITE,
+        );
+        // Small label underneath so users know what it does at a glance.
+        painter.text(
+            egui::pos2(btn_rect.center().x, btn_rect.bottom() + 2.0),
+            egui::Align2::CENTER_TOP,
+            "EXPORT",
+            egui::FontId::new(6.0, egui::FontFamily::Monospace),
+            theme::TEXT_DIM,
+        );
+    }
+    let clicked = resp.clicked();
+    if resp.hovered() {
+        resp.on_hover_text_at_pointer("Export one hit to WAV/AIFF");
+    }
+    clicked
 }
 
 /// UI-thread state for the tempo readout's interactive widget. Only
@@ -1225,6 +1302,8 @@ fn draw_tempo_widget(
 /// click-drag paint mode across frames.
 pub fn draw_sequencer_row(
     ui: &mut egui::Ui,
+    setter: &ParamSetter,
+    params: &SlammerParams,
     panel_rect: egui::Rect,
     sat_eq_bottom_y: f32,
     seq: &crate::sequencer::Sequencer,
@@ -1382,6 +1461,12 @@ pub fn draw_sequencer_row(
             seq.set_step(i, mode);
         }
 
+        // Right-click cycles per-step flam: Off → Flam → Ruff → Roll → Off.
+        if resp.secondary_clicked() {
+            seq.cycle_flam_state(i);
+        }
+        let resp = resp.on_hover_text("Right-click: Flam / Ruff / Roll");
+
         let on = seq.is_step_on(i);
         let is_playhead = seq.is_running_effective() && i == current;
         let beat_marker = i % 4 == 0;
@@ -1407,6 +1492,22 @@ pub fn draw_sequencer_row(
             },
         );
 
+        // Flam indicator dots above the pad — one dot per stroke beyond
+        // the base hit (Flam=1 dot, Ruff=2, Roll=3).
+        let flam = seq.flam_state(i);
+        if on && flam > 0 {
+            let n_dots = flam as usize;
+            let dot_r = 1.5;
+            let dot_gap = 2.0;
+            let total_w = n_dots as f32 * (dot_r * 2.0) + (n_dots - 1) as f32 * dot_gap;
+            let start_x = rect.center().x - total_w * 0.5 + dot_r;
+            let y = rect.top() - 3.0;
+            for d in 0..n_dots {
+                let cx = start_x + d as f32 * (dot_r * 2.0 + dot_gap);
+                painter.circle_filled(egui::pos2(cx, y), dot_r, theme::RED_GHOST);
+            }
+        }
+
         // Playhead ring
         if is_playhead {
             painter.rect_stroke(
@@ -1431,6 +1532,51 @@ pub fn draw_sequencer_row(
         if resp.hovered() {
             resp.on_hover_cursor(egui::CursorIcon::PointingHand);
         }
+    }
+
+    // SPRD + HUM flam knobs tucked into the right-hand gap.
+    {
+        let pads_right = pads_start_x + pitch * 16.0;
+        let small_knob = 18.0f32;
+        let knob_cell_w = small_knob + 10.0;
+        let row_w = knob_cell_w * 2.0 + 2.0;
+        let row_x = pads_right + 10.0;
+        let row_y = pad_top - 6.0;
+        let knob_rect = egui::Rect::from_min_size(
+            egui::pos2(row_x, row_y),
+            egui::vec2(row_w, small_knob + 20.0),
+        );
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(knob_rect), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.horizontal(|ui| {
+                param_knob(
+                    ui,
+                    setter,
+                    "flam_sprd",
+                    "SPRD",
+                    &params.flam_spread_ms,
+                    2.0,
+                    30.0,
+                    15.0,
+                    |v| format!("{:.0}ms", v),
+                    small_knob,
+                    theme::KNOB_METAL,
+                );
+                param_knob(
+                    ui,
+                    setter,
+                    "flam_hum",
+                    "HUM",
+                    &params.flam_humanize,
+                    0.0,
+                    1.0,
+                    0.3,
+                    |v| format!("{:.0}%", v * 100.0),
+                    small_knob,
+                    theme::KNOB_METAL,
+                );
+            });
+        });
     }
 
     // Fast-drag fill: if a paint drag is in progress and the pointer has
