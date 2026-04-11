@@ -13,6 +13,32 @@ interactive standalone editor.
 **Platforms:** Linux, macOS (Apple Silicon + Intel), Windows
 **License:** GPL-3.0-or-later
 
+## Listen
+
+Quick taste of what Slammer can do — every sample below is a single
+one-shot rendered straight out of the plugin via the BOUNCE button.
+
+<table>
+<tr>
+<td align="center"><b>Clean BD</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/bd_clean.mp4" controls width="240"></video></td>
+<td align="center"><b>Tech BD</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/bd_tech.mp4" controls width="240"></video></td>
+<td align="center"><b>Hard Kick</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/hard.mp4" controls width="240"></video></td>
+</tr>
+<tr>
+<td align="center"><b>808</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/808.mp4" controls width="240"></video></td>
+<td align="center"><b>909</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/909.mp4" controls width="240"></video></td>
+<td align="center"><b>Clap</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/clap.mp4" controls width="240"></video></td>
+</tr>
+<tr>
+<td align="center"><b>Snare</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/sd.mp4" controls width="240"></video></td>
+<td align="center"><b>Low Tom</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/lowtom.mp4" controls width="240"></video></td>
+<td align="center"><b>High Tom</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/hitom.mp4" controls width="240"></video></td>
+</tr>
+<tr>
+<td align="center" colspan="3"><b>Hi-Hat</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/hihat.mp4" controls width="240"></video></td>
+</tr>
+</table>
+
 ## Quick start
 
 Download the latest build for your platform from the
