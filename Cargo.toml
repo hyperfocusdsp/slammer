@@ -39,6 +39,15 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 # Cross-platform data directories
 directories = "5"
 
+# Audio file writing (one-shot export / bounce).
+hound = "3"
+
+# Native file-save dialog for the BOUNCE button. Default features give the
+# synchronous API (gtk3 backend on Linux, Cocoa on macOS, Win32 on Windows) —
+# save_file() blocks the GUI thread briefly, which is fine because the user
+# is actively waiting and audio runs on its own thread.
+rfd = "0.14"
+
 [profile.release]
 lto = "thin"
 strip = "symbols"

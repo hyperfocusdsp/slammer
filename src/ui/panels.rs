@@ -1461,11 +1461,6 @@ pub fn draw_sequencer_row(
             seq.set_step(i, mode);
         }
 
-        // Right-click cycles per-step flam: Off → Flam → Ruff → Roll → Off.
-        if resp.secondary_clicked() {
-            seq.cycle_flam_state(i);
-        }
-        let resp = resp.on_hover_text("Right-click: Flam / Ruff / Roll");
 
         let on = seq.is_step_on(i);
         let is_playhead = seq.is_running_effective() && i == current;
@@ -1491,22 +1486,6 @@ pub fn draw_sequencer_row(
                 egui::Color32::from_rgb(0x2a, 0x2a, 0x2a)
             },
         );
-
-        // Flam indicator dots above the pad — one dot per stroke beyond
-        // the base hit (Flam=1 dot, Ruff=2, Roll=3).
-        let flam = seq.flam_state(i);
-        if on && flam > 0 {
-            let n_dots = flam as usize;
-            let dot_r = 1.5;
-            let dot_gap = 2.0;
-            let total_w = n_dots as f32 * (dot_r * 2.0) + (n_dots - 1) as f32 * dot_gap;
-            let start_x = rect.center().x - total_w * 0.5 + dot_r;
-            let y = rect.top() - 3.0;
-            for d in 0..n_dots {
-                let cx = start_x + d as f32 * (dot_r * 2.0 + dot_gap);
-                painter.circle_filled(egui::pos2(cx, y), dot_r, theme::RED_GHOST);
-            }
-        }
 
         // Playhead ring
         if is_playhead {
@@ -1534,13 +1513,42 @@ pub fn draw_sequencer_row(
         }
     }
 
-    // SPRD + HUM flam knobs tucked into the right-hand gap.
+    // FLAM button + SPRD + HUM tucked into the right-hand gap.
     {
         let pads_right = pads_start_x + pitch * 16.0;
         let small_knob = 18.0f32;
+
+        // FLAM toggle: small LED + click-target rect, same pattern as LIM.
+        let flam_cx = pads_right + 18.0;
+        let flam_cy = pad_top + pad_h * 0.5;
+        let flam_on = params.flam_on.value();
+        draw_led(ui.painter(), flam_cx, flam_cy, flam_on);
+        ui.painter().text(
+            egui::pos2(flam_cx + 8.0, flam_cy),
+            egui::Align2::LEFT_CENTER,
+            "FLAM",
+            egui::FontId::new(8.0, egui::FontFamily::Monospace),
+            if flam_on { theme::WHITE } else { theme::TEXT_DIM },
+        );
+        let flam_rect = egui::Rect::from_center_size(
+            egui::pos2(flam_cx + 12.0, flam_cy),
+            egui::vec2(40.0, 14.0),
+        );
+        let flam_resp = ui.interact(
+            flam_rect,
+            egui::Id::new("flam_toggle"),
+            egui::Sense::click(),
+        );
+        if flam_resp.clicked() {
+            setter.begin_set_parameter(&params.flam_on);
+            setter.set_parameter(&params.flam_on, !flam_on);
+            setter.end_set_parameter(&params.flam_on);
+        }
+
+        // SPRD + HUM knobs to the right of the FLAM button.
         let knob_cell_w = small_knob + 10.0;
         let row_w = knob_cell_w * 2.0 + 2.0;
-        let row_x = pads_right + 10.0;
+        let row_x = flam_cx + 46.0;
         let row_y = pad_top - 6.0;
         let knob_rect = egui::Rect::from_min_size(
             egui::pos2(row_x, row_y),

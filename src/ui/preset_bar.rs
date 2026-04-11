@@ -13,7 +13,6 @@ use std::sync::Arc;
 
 use crate::params::{ParamSnapshot, SlammerParams};
 use crate::presets::{PresetEntry, PresetManager};
-use crate::sequencer::Sequencer;
 use crate::ui::theme;
 use crate::ui::widgets::{draw_inset_display, preset_arrow_btn};
 
@@ -98,7 +97,6 @@ impl PresetBar {
         ui: &mut egui::Ui,
         setter: &ParamSetter,
         params: &SlammerParams,
-        sequencer: &Sequencer,
         preset_manager: &Arc<Mutex<PresetManager>>,
         origin_x: f32,
         header_center_y: f32,
@@ -160,7 +158,7 @@ impl PresetBar {
                 let entry = self.cached[idx].clone();
                 self.state.selected_index = idx;
                 self.state.selected_name = entry.name.clone();
-                entry.params.apply(setter, params, sequencer);
+                entry.params.apply(setter, params);
                 crate::presets::save_last_preset_name(&entry.name);
             }
         } else {
@@ -174,7 +172,7 @@ impl PresetBar {
         );
 
         if is_editing {
-            self.render_edit_mode(ui, setter, params, sequencer, preset_manager, led_rect);
+            self.render_edit_mode(ui, setter, params, preset_manager, led_rect);
         } else {
             self.render_led_display(ui, setter, params, led_rect, display_w, &selected_name);
             if dropdown_open {
@@ -182,7 +180,6 @@ impl PresetBar {
                     ui,
                     setter,
                     params,
-                    sequencer,
                     led_rect,
                     display_w,
                     &selected_name,
@@ -219,7 +216,7 @@ impl PresetBar {
                 let entry = self.cached[idx].clone();
                 self.state.selected_index = idx;
                 self.state.selected_name = entry.name.clone();
-                entry.params.apply(setter, params, sequencer);
+                entry.params.apply(setter, params);
                 crate::presets::save_last_preset_name(&entry.name);
             }
         } else {
@@ -245,7 +242,7 @@ impl PresetBar {
         );
         if save_resp.clicked() {
             if self.state.editing {
-                self.commit_save(preset_manager, params, sequencer);
+                self.commit_save(preset_manager, params);
             } else {
                 self.state.editing = true;
                 self.state.edit_buffer = self.state.selected_name.clone();
@@ -316,7 +313,7 @@ impl PresetBar {
                 let entry = self.cached[idx].clone();
                 self.state.selected_index = idx;
                 self.state.selected_name = entry.name.clone();
-                entry.params.apply(setter, params, sequencer);
+                entry.params.apply(setter, params);
                 crate::presets::save_last_preset_name(&entry.name);
             }
         }
@@ -340,7 +337,6 @@ impl PresetBar {
         ui: &mut egui::Ui,
         _setter: &ParamSetter,
         params: &SlammerParams,
-        sequencer: &Sequencer,
         preset_manager: &Arc<Mutex<PresetManager>>,
         led_rect: egui::Rect,
     ) {
@@ -390,7 +386,7 @@ impl PresetBar {
             )
         });
         if enter_pressed {
-            self.commit_save(preset_manager, params, sequencer);
+            self.commit_save(preset_manager, params);
         } else if esc_pressed {
             self.state.editing = false;
         }
@@ -433,7 +429,6 @@ impl PresetBar {
         ui: &mut egui::Ui,
         setter: &ParamSetter,
         params: &SlammerParams,
-        sequencer: &Sequencer,
         led_rect: egui::Rect,
         display_w: f32,
         selected_name: &str,
@@ -523,7 +518,7 @@ impl PresetBar {
             self.state.selected_name = entry.name.clone();
             self.state.selected_index = idx;
             self.state.dropdown_open = false;
-            entry.params.apply(setter, params, sequencer);
+            entry.params.apply(setter, params);
             crate::presets::save_last_preset_name(&entry.name);
         }
 
@@ -541,11 +536,10 @@ impl PresetBar {
         &mut self,
         preset_manager: &Arc<Mutex<PresetManager>>,
         params: &SlammerParams,
-        sequencer: &Sequencer,
     ) {
         let name = self.state.edit_buffer.trim().to_owned();
         if !name.is_empty() {
-            let snapshot = ParamSnapshot::capture(params, sequencer);
+            let snapshot = ParamSnapshot::capture(params);
             let result = preset_manager.lock().save(&name, snapshot);
             match result {
                 Ok(()) => {

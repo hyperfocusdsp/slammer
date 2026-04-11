@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SLAMMER - Mockup B: Military Olive</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a1a; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: monospace; }
+  canvas { border-radius: 4px; box-shadow: 0 8px 32px rgba(0,0,0,0.8), 0 2px 8px rgba(0,0,0,0.6); }
+  .label { color: #666; text-align: center; margin-top: 12px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div>
+<canvas id="c" width="680" height="360"></canvas>
+<div class="label">Mockup B: Military Olive / Cream Paint &mdash; Worn Stencil Labels</div>
+</div>
+<script>
+const W = 680, H = 360;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+function rand(seed) {
+  let s = seed;
+  return () => { s = (s * 16807 + 0) % 2147483647; return s / 2147483647; };
+}
+
+function drawMetalPanel(x, y, w, h, seed) {
+  const r = rand(seed);
+
+  // Base: olive drab painted metal
+  const grad = ctx.createLinearGradient(x, y, x, y + h);
+  grad.addColorStop(0, '#3d3f2e');
+  grad.addColorStop(0.15, '#363828');
+  grad.addColorStop(0.5, '#333524');
+  grad.addColorStop(0.85, '#363828');
+  grad.addColorStop(1, '#3d3f2e');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 4);
+  ctx.fill();
+
+  // Paint texture - rough surface
+  for (let i = 0; i < w * h * 0.2; i++) {
+    const px = x + r() * w;
+    const py = y + r() * h;
+    const v = r() * 0.05 - 0.025;
+    ctx.fillStyle = v > 0
+      ? `rgba(200,200,180,${v})`
+      : `rgba(0,0,0,${-v * 1.5})`;
+    ctx.fillRect(px, py, r() > 0.5 ? 2 : 1, 1);
+  }
+
+  // Paint chips / wear spots
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 4);
+  ctx.clip();
+  for (let i = 0; i < 8; i++) {
+    const wx = x + r() * w;
+    const wy = y + r() * h;
+    const wr = 3 + r() * 8;
+    ctx.beginPath();
+    ctx.arc(wx, wy, wr, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${40 + r()*20}, ${42 + r()*20}, ${35 + r()*15}, ${0.3 + r()*0.3})`;
+    ctx.fill();
+  }
+
+  // Scratches through paint showing metal underneath
+  for (let i = 0; i < 15; i++) {
+    const sx = x + r() * w;
+    const sy = y + r() * h;
+    const angle = r() * Math.PI * 0.4 - 0.2 + (r() > 0.6 ? Math.PI * 0.5 : 0);
+    const len = 10 + r() * 40;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx + Math.cos(angle) * len, sy + Math.sin(angle) * len);
+    ctx.strokeStyle = `rgba(180,175,160,${0.03 + r() * 0.06})`;
+    ctx.lineWidth = 0.3 + r() * 0.8;
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Edge bevel
+  ctx.beginPath();
+  ctx.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, 4);
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.roundRect(x + 1.5, y + 1.5, w - 3, h - 3, 3);
+  ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+function drawScrew(cx, cy, size) {
+  // Phillips head screw
+  const grad = ctx.createRadialGradient(cx - 0.5, cy - 0.5, 0, cx, cy, size);
+  grad.addColorStop(0, '#999');
+  grad.addColorStop(0.3, '#777');
+  grad.addColorStop(0.7, '#555');
+  grad.addColorStop(1, '#383838');
+  ctx.beginPath();
+  ctx.arc(cx, cy, size, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Cross slot
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = '#222';
+  ctx.beginPath();
+  ctx.moveTo(cx - size * 0.5, cy);
+  ctx.lineTo(cx + size * 0.5, cy);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - size * 0.5);
+  ctx.lineTo(cx, cy + size * 0.5);
+  ctx.stroke();
+}
+
+function drawKnob(cx, cy, radius, value, label) {
+  // Shadow
+  ctx.beginPath();
+  ctx.arc(cx, cy + 2, radius + 3, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fill();
+
+  // Recessed ring in panel
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius + 3, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fill();
+
+  // Knob body - silver/aluminum
+  const kgrad = ctx.createRadialGradient(cx - radius * 0.3, cy - radius * 0.4, 0, cx, cy, radius);
+  kgrad.addColorStop(0, '#b8b8b8');
+  kgrad.addColorStop(0.3, '#999');
+  kgrad.addColorStop(0.6, '#777');
+  kgrad.addColorStop(1, '#555');
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = kgrad;
+  ctx.fill();
+
+  // Knurled edge
+  for (let a = 0; a < Math.PI * 2; a += Math.PI / 20) {
+    const ix = cx + Math.cos(a) * (radius - 0.5);
+    const iy = cy + Math.sin(a) * (radius - 0.5);
+    const ox = cx + Math.cos(a) * (radius + 0.5);
+    const oy = cy + Math.sin(a) * (radius + 0.5);
+    ctx.beginPath();
+    ctx.moveTo(ix, iy);
+    ctx.lineTo(ox, oy);
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.lineWidth = 0.6;
+    ctx.stroke();
+  }
+
+  // Cap
+  const capGrad = ctx.createRadialGradient(cx - 1, cy - 1, 0, cx, cy, radius * 0.6);
+  capGrad.addColorStop(0, '#aaa');
+  capGrad.addColorStop(0.5, '#888');
+  capGrad.addColorStop(1, '#666');
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * 0.6, 0, Math.PI * 2);
+  ctx.fillStyle = capGrad;
+  ctx.fill();
+
+  // Indicator dot (white)
+  const ang = Math.PI * 0.75 + Math.PI * 1.5 * value;
+  const dotX = cx + Math.cos(ang) * (radius * 0.42);
+  const dotY = cy + Math.sin(ang) * (radius * 0.42);
+  ctx.beginPath();
+  ctx.arc(dotX, dotY, 2, 0, Math.PI * 2);
+  ctx.fillStyle = '#fff';
+  ctx.fill();
+
+  // Scale marks around knob
+  for (let i = 0; i <= 10; i++) {
+    const a = Math.PI * 0.75 + Math.PI * 1.5 * (i / 10);
+    const inner = radius + 5;
+    const outer = radius + 8;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * inner, cy + Math.sin(a) * inner);
+    ctx.lineTo(cx + Math.cos(a) * outer, cy + Math.sin(a) * outer);
+    ctx.strokeStyle = i <= value * 10 ? 'rgba(220,200,140,0.6)' : 'rgba(180,175,160,0.15)';
+    ctx.lineWidth = i % 5 === 0 ? 1.2 : 0.6;
+    ctx.stroke();
+  }
+
+  // Label - cream/stencil style
+  ctx.font = '7px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#c8c0a0';
+  ctx.fillText(label, cx, cy + radius + 22);
+}
+
+function drawDisplayCutout(x, y, w, h) {
+  // Beveled cutout
+  ctx.fillStyle = '#111';
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 2);
+  ctx.fill();
+
+  // Inner shadow top/left
+  ctx.beginPath();
+  ctx.moveTo(x + w, y);
+  ctx.lineTo(x, y);
+  ctx.lineTo(x, y + h);
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Reflection bottom/right
+  ctx.beginPath();
+  ctx.moveTo(x, y + h);
+  ctx.lineTo(x + w, y + h);
+  ctx.lineTo(x + w, y);
+  ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Slight green tint (old LCD)
+  const lcdGrad = ctx.createLinearGradient(x, y, x, y + h);
+  lcdGrad.addColorStop(0, 'rgba(0,30,10,0.3)');
+  lcdGrad.addColorStop(1, 'rgba(0,20,5,0.5)');
+  ctx.fillStyle = lcdGrad;
+  ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
+}
+
+function drawSectionLabel(x, y, text) {
+  // Stenciled military-style label
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'left';
+  // Shadow (paint worn off edge)
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillText(text, x + 0.5, y + 0.5);
+  // Main text - cream paint
+  ctx.fillStyle = '#c8c0a0';
+  ctx.fillText(text, x, y);
+}
+
+function drawLcdSelector(x, y, w, h, text) {
+  drawDisplayCutout(x, y, w, h);
+  // Green LCD text
+  ctx.fillStyle = '#44cc66';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, x + w / 2, y + h / 2 + 4);
+
+  // Arrow buttons - embossed metal
+  const btnW = 14, btnH = h;
+  // Left button
+  const lx = x - btnW - 3;
+  ctx.fillStyle = '#444840';
+  ctx.beginPath();
+  ctx.roundRect(lx, y, btnW, btnH, 2);
+  ctx.fill();
+  ctx.fillStyle = '#c8c0a0';
+  ctx.font = '8px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('\u25C0', lx + btnW / 2, y + btnH / 2 + 3);
+
+  // Right button
+  const rx = x + w + 3;
+  ctx.fillStyle = '#444840';
+  ctx.beginPath();
+  ctx.roundRect(rx, y, btnW, btnH, 2);
+  ctx.fill();
+  ctx.fillStyle = '#c8c0a0';
+  ctx.fillText('\u25B6', rx + btnW / 2, y + btnH / 2 + 3);
+}
+
+// ===== RENDER =====
+
+// Main panel
+drawMetalPanel(0, 0, W, H, 42);
+
+// Screws
+drawScrew(14, 14, 5);
+drawScrew(W - 14, 14, 5);
+drawScrew(14, H - 14, 5);
+drawScrew(W - 14, H - 14, 5);
+
+// Header
+ctx.font = 'bold 18px monospace';
+ctx.fillStyle = '#c8c0a0';
+ctx.textAlign = 'left';
+ctx.fillText('SLAMMER', 30, 30);
+ctx.font = '8px monospace';
+ctx.fillStyle = '#666';
+ctx.textAlign = 'right';
+ctx.fillText('v0.1.0', W - 30, 28);
+
+// Separator - routed groove in metal
+ctx.beginPath();
+ctx.moveTo(30, 40);
+ctx.lineTo(W - 30, 40);
+ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+ctx.lineWidth = 1.5;
+ctx.stroke();
+ctx.beginPath();
+ctx.moveTo(30, 41.5);
+ctx.lineTo(W - 30, 41.5);
+ctx.strokeStyle = 'rgba(200,195,170,0.05)';
+ctx.lineWidth = 0.5;
+ctx.stroke();
+
+// --- Row 1: Waveform + Master ---
+drawDisplayCutout(30, 48, 380, 56);
+// Waveform
+ctx.save();
+ctx.beginPath();
+ctx.roundRect(31, 49, 378, 54, 1);
+ctx.clip();
+const rw = rand(99);
+for (let i = 0; i < 378; i++) {
+  const amp = Math.exp(-Math.abs(i - 70) / 35) * 22 + Math.exp(-Math.abs(i - 180) / 50) * 14;
+  const noise = (rw() - 0.5) * amp * 0.7;
+  const mid = 76;
+  ctx.fillStyle = 'rgba(68,204,102,0.3)';
+  ctx.fillRect(31 + i, mid - Math.abs(noise), 1, Math.abs(noise) * 2);
+}
+ctx.restore();
+ctx.font = '7px monospace';
+ctx.fillStyle = '#44cc66';
+ctx.globalAlpha = 0.4;
+ctx.textAlign = 'left';
+ctx.fillText('OUTPUT', 34, 58);
+ctx.globalAlpha = 1;
+
+drawKnob(448, 76, 16, 0.35, 'DECAY');
+drawKnob(498, 76, 16, 0.8, 'VEL');
+drawKnob(548, 76, 16, 0.5, 'VOL');
+
+// --- SUB ---
+const r2y = 122;
+drawSectionLabel(30, r2y, 'SUB');
+drawKnob(76, r2y + 24, 14, 0.85, 'GAIN');
+drawKnob(118, r2y + 24, 14, 0.4, 'START');
+drawKnob(160, r2y + 24, 14, 0.25, 'END');
+drawKnob(202, r2y + 24, 14, 0.3, 'SWEEP');
+drawKnob(244, r2y + 24, 14, 0.45, 'CURVE');
+drawKnob(286, r2y + 24, 14, 0.25, 'PHASE');
+
+// Divider
+ctx.beginPath();
+ctx.moveTo(322, r2y - 4);
+ctx.lineTo(322, r2y + 50);
+ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+ctx.lineWidth = 1;
+ctx.stroke();
+ctx.beginPath();
+ctx.moveTo(323, r2y - 4);
+ctx.lineTo(323, r2y + 50);
+ctx.strokeStyle = 'rgba(200,195,170,0.04)';
+ctx.stroke();
+
+// TOP
+drawSectionLabel(338, r2y, 'TOP');
+drawKnob(384, r2y + 24, 14, 0.25, 'GAIN');
+drawKnob(426, r2y + 24, 14, 0.15, 'DECAY');
+drawKnob(468, r2y + 24, 14, 0.5, 'FREQ');
+drawKnob(510, r2y + 24, 14, 0.5, 'BW');
+
+// --- MID ---
+const r3y = 192;
+drawSectionLabel(30, r3y, 'MID');
+drawKnob(76, r3y + 24, 14, 0.5, 'GAIN');
+drawKnob(118, r3y + 24, 14, 0.5, 'START');
+drawKnob(160, r3y + 24, 14, 0.3, 'END');
+drawKnob(202, r3y + 24, 14, 0.2, 'SWEEP');
+drawKnob(244, r3y + 24, 14, 0.55, 'CURVE');
+drawKnob(286, r3y + 24, 14, 0.3, 'DECAY');
+drawKnob(328, r3y + 24, 14, 0.7, 'TONE');
+drawKnob(370, r3y + 24, 14, 0.3, 'NOISE');
+drawKnob(412, r3y + 24, 14, 0.4, 'COLOR');
+
+// --- SAT + EQ ---
+const r5y = 266;
+
+// Groove separator
+ctx.beginPath();
+ctx.moveTo(30, r5y - 10);
+ctx.lineTo(W - 30, r5y - 10);
+ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+ctx.lineWidth = 1;
+ctx.stroke();
+
+drawSectionLabel(30, r5y, 'SAT');
+drawLcdSelector(78, r5y - 4, 58, 18, 'TAPE');
+drawKnob(170, r5y + 16, 14, 0.65, 'DRIVE');
+drawKnob(212, r5y + 16, 14, 1.0, 'MIX');
+
+// Vertical divider
+ctx.beginPath();
+ctx.moveTo(248, r5y - 6);
+ctx.lineTo(248, r5y + 42);
+ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+ctx.lineWidth = 1;
+ctx.stroke();
+
+drawSectionLabel(264, r5y, 'EQ');
+drawKnob(310, r5y + 16, 14, 0.5, 'TILT');
+drawKnob(352, r5y + 16, 14, 0.6, 'LOW');
+drawKnob(394, r5y + 16, 14, 0.4, 'NOTCH');
+drawKnob(436, r5y + 16, 14, 0.1, 'Q');
+drawKnob(478, r5y + 16, 14, 0.6, 'DEPTH');
+
+// Bottom brand
+ctx.font = '7px monospace';
+ctx.fillStyle = 'rgba(200,192,160,0.2)';
+ctx.textAlign = 'center';
+ctx.fillText('REXIST', W / 2, H - 12);
+</script>
+</body>
+</html>

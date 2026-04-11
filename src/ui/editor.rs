@@ -102,7 +102,7 @@ pub fn create(
                     if !sequencer.is_host_synced() {
                         let mgr = preset_manager.lock();
                         if let Some(entry) = mgr.list_all().into_iter().find(|e| e.name == name) {
-                            entry.params.apply(setter, &params, &sequencer);
+                            entry.params.apply(setter, &params);
                             // Reflect the selection in the preset bar UI.
                             let mut bar = preset_bar.lock();
                             bar.select_by_name(&entry.name);
@@ -148,7 +148,6 @@ pub fn create(
                             ui,
                             setter,
                             &params,
-                            &sequencer,
                             &preset_manager,
                             preset_origin_x,
                             header_center_y,

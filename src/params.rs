@@ -23,10 +23,8 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use std::sync::atomic::Ordering;
-
 use crate::dsp::engine::KickParams;
-use crate::sequencer::{DEFAULT_STEP_BITS, STEPS, Sequencer};
+use crate::sequencer::DEFAULT_STEP_BITS;
 
 // ---------------------------------------------------------------------------
 // Param-builder helpers
@@ -102,12 +100,6 @@ pub struct SlammerParams {
     /// back into the atomics on load.
     #[persist = "seq_steps"]
     pub seq_steps: Arc<Mutex<u16>>,
-
-    /// Per-step flam state packed as 2 bits per step (32 bits used; stored
-    /// in a u64 for headroom). Deserialized by nih-plug at init time and
-    /// copied into `Sequencer::flam_state` by `Plugin::initialize`.
-    #[persist = "seq_flam"]
-    pub seq_flam: Arc<Mutex<u64>>,
 
     #[id = "master_vol"]
     pub master_volume: FloatParam,
@@ -226,7 +218,10 @@ pub struct SlammerParams {
     #[id = "comp_limit"]
     pub comp_limit_on: BoolParam,
 
-    // --- Flam (per-step multi-stroke) ---
+    // --- Flam (global click/noise ghost hit) ---
+    #[id = "flam_on"]
+    pub flam_on: BoolParam,
+
     #[id = "flam_spread"]
     pub flam_spread_ms: FloatParam,
 
@@ -292,7 +287,6 @@ impl Default for SlammerParams {
             editor_state: EguiState::from_size(680, 444), // matches BASE_W x BASE_H (1:1 default)
 
             seq_steps: Arc::new(Mutex::new(DEFAULT_STEP_BITS)),
-            seq_flam: Arc::new(Mutex::new(0)),
 
             master_volume: db_knob("Master Volume", 0.0, -60.0, 6.0),
 
@@ -480,6 +474,8 @@ impl Default for SlammerParams {
             comp_limit_on: BoolParam::new("Comp Limiter", false),
 
             // --- Flam ---
+            flam_on: BoolParam::new("Flam", false),
+
             flam_spread_ms: FloatParam::new(
                 "Flam Spread",
                 15.0,
@@ -553,14 +549,14 @@ pub struct ParamSnapshot {
     pub comp_drive: f32,
     pub comp_limit_on: bool,
 
+    pub flam_on: bool,
     pub flam_spread_ms: f32,
     pub flam_humanize: f32,
-    pub flam_states: [u8; 16],
 }
 
 impl ParamSnapshot {
     /// Read current values off every persisted param.
-    pub fn capture(p: &SlammerParams, sequencer: &Sequencer) -> Self {
+    pub fn capture(p: &SlammerParams) -> Self {
         Self {
             decay_ms: p.decay_ms.value(),
             velocity_sens: p.velocity_sens.value(),
@@ -605,15 +601,15 @@ impl ParamSnapshot {
             comp_drive: p.comp_drive.value(),
             comp_limit_on: p.comp_limit_on.value(),
 
+            flam_on: p.flam_on.value(),
             flam_spread_ms: p.flam_spread_ms.value(),
             flam_humanize: p.flam_humanize.value(),
-            flam_states: std::array::from_fn(|i| sequencer.flam_state[i].load(Ordering::Relaxed)),
         }
     }
 
     /// Push every field of the snapshot back into the live params, going
     /// through `ParamSetter` so host automation/undo see the changes.
-    pub fn apply(&self, setter: &ParamSetter, p: &SlammerParams, sequencer: &Sequencer) {
+    pub fn apply(&self, setter: &ParamSetter, p: &SlammerParams) {
         macro_rules! set {
             ($param:expr, $val:expr) => {
                 setter.begin_set_parameter(&$param);
@@ -666,11 +662,11 @@ impl ParamSnapshot {
         setter.set_parameter(&p.comp_limit_on, self.comp_limit_on);
         setter.end_set_parameter(&p.comp_limit_on);
 
+        setter.begin_set_parameter(&p.flam_on);
+        setter.set_parameter(&p.flam_on, self.flam_on);
+        setter.end_set_parameter(&p.flam_on);
         set!(p.flam_spread_ms, self.flam_spread_ms);
         set!(p.flam_humanize, self.flam_humanize);
-        for (i, &st) in self.flam_states.iter().enumerate().take(STEPS) {
-            sequencer.flam_state[i].store(st & 0b11, Ordering::Relaxed);
-        }
     }
 }
 
@@ -681,6 +677,7 @@ mod flam_param_tests {
     #[test]
     fn flam_params_defaults() {
         let p = SlammerParams::default();
+        assert!(!p.flam_on.value());
         assert!((p.flam_spread_ms.value() - 15.0).abs() < 1e-4);
         assert!((p.flam_humanize.value() - 0.3).abs() < 1e-4);
     }
@@ -688,9 +685,9 @@ mod flam_param_tests {
     #[test]
     fn param_snapshot_roundtrip_flam() {
         let mut snap = ParamSnapshot::default();
+        snap.flam_on = true;
         snap.flam_spread_ms = 22.5;
         snap.flam_humanize = 0.75;
-        snap.flam_states = [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3];
         let json = serde_json::to_string(&snap).unwrap();
         let back: ParamSnapshot = serde_json::from_str(&json).unwrap();
         assert_eq!(back, snap);
@@ -700,7 +697,7 @@ mod flam_param_tests {
     fn old_preset_loads_with_flam_defaults() {
         let json = r#"{ "decay_ms": 120.0 }"#;
         let snap: ParamSnapshot = serde_json::from_str(json).unwrap();
-        assert_eq!(snap.flam_states, [0u8; 16]);
+        assert!(!snap.flam_on);
         assert_eq!(snap.flam_spread_ms, 0.0);
         assert_eq!(snap.flam_humanize, 0.0);
     }

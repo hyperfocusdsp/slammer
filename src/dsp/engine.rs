@@ -31,6 +31,11 @@ struct PendingHit {
     samples_until: u32,
     velocity: f32,
     live: bool,
+    /// Ghost hits retrigger click + mid_noise on the currently-active voice
+    /// only — they do NOT steal a fresh voice and do NOT restart sub/mid
+    /// pitch envelopes. Musically this is a beater-on-skin ghost stroke:
+    /// fresh click/noise layered over the already-decaying body resonance.
+    is_ghost: bool,
 }
 
 /// A single kick voice: all per-trigger state (oscillators, envelopes,
@@ -135,6 +140,35 @@ impl KickVoice {
         self.mid_noise.trigger();
 
         // TOP
+        self.top_click.regenerate(
+            sample_rate,
+            params.top_decay_ms,
+            params.top_freq,
+            params.top_bw,
+        );
+        self.top_click.trigger();
+        self.top_amp_env.trigger(params.top_decay_ms);
+    }
+
+    /// Retrigger the click + mid_noise layers *in place*, leaving the
+    /// sub/mid pitch envelopes and their oscillators running. Used for
+    /// flam ghost hits — a secondary beater strike that adds a fresh
+    /// transient without re-ringing the body resonance.
+    ///
+    /// The mid_amp_env keeps decaying, so the ghost's noise rides the
+    /// already-falling body envelope (naturally quieter than the main
+    /// hit). The top click gets a fresh envelope so the transient is
+    /// always present. `velocity` scales only this ghost's contribution.
+    fn trigger_ghost(&mut self, params: &KickParams, velocity: f32, sample_rate: f32) {
+        // Fold the ghost velocity into the main velocity so the per-sample
+        // gain reflects the softer ghost stroke. We scale instead of
+        // overwrite so a fading voice keeps its existing character.
+        self.velocity = (self.velocity * 0.5 + velocity * 0.5).clamp(0.0, 1.0);
+        self.triggered = true;
+        self.fadeout_gain = 1.0;
+        self.fadeout_step = 0.0;
+
+        self.mid_noise.trigger();
         self.top_click.regenerate(
             sample_rate,
             params.top_decay_ms,
@@ -253,27 +287,32 @@ impl KickEngine {
     /// Push a hit into the first free ring slot. Silently drops if the ring
     /// is full (pathological — 12 slots covers 4 hits × 3 overlapping steps,
     /// which is beyond musically reasonable).
-    fn push_pending_internal(&mut self, samples_until: u32, velocity: f32) {
+    fn push_pending_internal(&mut self, samples_until: u32, velocity: f32, is_ghost: bool) {
         for slot in &mut self.pending {
             if !slot.live {
                 slot.samples_until = samples_until;
                 slot.velocity = velocity;
                 slot.live = true;
+                slot.is_ghost = is_ghost;
                 return;
             }
         }
     }
 
-    /// Advance the ring by one sample. Writes the velocities of any hits
-    /// that fire this sample into `out`, returning how many were written.
-    fn tick_pending_internal(&mut self, out: &mut [f32; PENDING_RING_SIZE]) -> usize {
+    /// Advance the ring by one sample. Writes the (velocity, is_ghost) of
+    /// any hits that fire this sample into `out`, returning how many were
+    /// written.
+    fn tick_pending_internal(
+        &mut self,
+        out: &mut [(f32, bool); PENDING_RING_SIZE],
+    ) -> usize {
         let mut count = 0;
         for slot in &mut self.pending {
             if !slot.live {
                 continue;
             }
             if slot.samples_until == 0 {
-                out[count] = slot.velocity;
+                out[count] = (slot.velocity, slot.is_ghost);
                 count += 1;
                 slot.live = false;
             } else {
@@ -301,64 +340,41 @@ impl KickEngine {
         (u as f32 / 2_147_483_648.0) - 1.0
     }
 
-    /// Schedule a group of 1–4 hits into the pending ring with sample-accurate
-    /// offsets relative to "now" (offset 0 fires on the next `tick_pending`).
-    ///
-    /// * `n_hits` — 1, 2, 3, or 4. Anything else is clamped to 1..=4.
-    /// * `gap_samples` — base inter-stroke gap in samples. Ignored when `n_hits == 1`.
-    /// * `humanize` — 0.0 (exact) to 1.0 (full jitter). Scales both timing
-    ///   jitter (±20%×humanize) and velocity jitter (±10%×humanize).
-    /// * `step_velocity` — per-step velocity multiplier applied on top of the
-    ///   per-hit base amplitude.
-    pub fn schedule_group(
-        &mut self,
-        n_hits: usize,
-        gap_samples: u32,
-        humanize: f32,
-        step_velocity: f32,
-    ) {
-        let n = n_hits.clamp(1, 4);
-        let base_vels: &[f32] = match n {
-            1 => &[1.0],
-            2 => &[0.7, 1.0],
-            3 => &[0.7, 0.85, 1.0],
-            4 => &[0.6, 0.75, 0.85, 1.0],
-            _ => unreachable!(),
+    /// Schedule a ghost-stroke hit `gap_samples` from "now", optionally
+    /// humanized. The ghost retriggers click + mid_noise on the currently
+    /// active voice when it fires — no fresh voice, no sub/mid pitch reset.
+    pub fn schedule_ghost(&mut self, gap_samples: u32, humanize: f32) {
+        let humanize = humanize.clamp(0.0, 1.0);
+        let base_vel = 0.7;
+
+        let offset = if humanize > 0.0 && gap_samples > 0 {
+            let j = self.rng_centered() * 0.2 * humanize * gap_samples as f32;
+            let signed = gap_samples as i64 + j as i64;
+            signed.max(0) as u32
+        } else {
+            gap_samples
         };
 
-        let humanize = humanize.clamp(0.0, 1.0);
-        for (i, &bv) in base_vels.iter().enumerate() {
-            let base_offset = (i as u32).saturating_mul(gap_samples);
+        let vel = if humanize > 0.0 {
+            let j = self.rng_centered() * 0.1 * humanize;
+            (base_vel * (1.0 + j)).clamp(0.0, 2.0)
+        } else {
+            base_vel
+        };
 
-            let offset = if humanize > 0.0 && gap_samples > 0 && i > 0 {
-                let j = self.rng_centered() * 0.2 * humanize * gap_samples as f32;
-                let signed = base_offset as i64 + j as i64;
-                signed.max(0) as u32
-            } else {
-                base_offset
-            };
-
-            let vel = if humanize > 0.0 {
-                let j = self.rng_centered() * 0.1 * humanize;
-                (bv * step_velocity * (1.0 + j)).clamp(0.0, 2.0)
-            } else {
-                bv * step_velocity
-            };
-
-            self.push_pending_internal(offset, vel);
-        }
+        self.push_pending_internal(offset, vel, true);
     }
 
     #[cfg(test)]
     pub fn push_pending(&mut self, samples_until: u32, velocity: f32) {
-        self.push_pending_internal(samples_until, velocity);
+        self.push_pending_internal(samples_until, velocity, false);
     }
 
     #[cfg(test)]
     pub fn tick_pending_for_test(&mut self) -> Vec<f32> {
-        let mut out = [0.0f32; PENDING_RING_SIZE];
+        let mut out = [(0.0f32, false); PENDING_RING_SIZE];
         let n = self.tick_pending_internal(&mut out);
-        out[..n].to_vec()
+        out[..n].iter().map(|(v, _)| *v).collect()
     }
 
     #[cfg(test)]
@@ -420,26 +436,36 @@ impl KickEngine {
 
         let sat_mode = SatMode::from_u8(params.sat_mode);
         let mut peak = 0.0f32;
-        let mut fired_buf = [0.0f32; PENDING_RING_SIZE];
+        let mut fired_buf = [(0.0f32, false); PENDING_RING_SIZE];
 
         for (l, r) in output_left.iter_mut().zip(output_right.iter_mut()) {
             // Fire any scheduled hits whose countdown reached zero this sample.
             let n_fired = self.tick_pending_internal(&mut fired_buf);
             for i in 0..n_fired {
-                let vel = fired_buf[i];
-                if self.voices[self.active_voice].is_active() {
-                    self.voices[self.active_voice].start_fadeout(self.sample_rate);
-                    self.active_voice = (self.active_voice + 1) % NUM_VOICES;
+                let (vel, is_ghost) = fired_buf[i];
+                if is_ghost {
+                    // Ghost: retrigger click + mid_noise on the currently
+                    // active voice only. No voice stealing.
+                    self.voices[self.active_voice].trigger_ghost(
+                        params,
+                        vel,
+                        self.sample_rate,
+                    );
+                } else {
                     if self.voices[self.active_voice].is_active() {
                         self.voices[self.active_voice].start_fadeout(self.sample_rate);
+                        self.active_voice = (self.active_voice + 1) % NUM_VOICES;
+                        if self.voices[self.active_voice].is_active() {
+                            self.voices[self.active_voice].start_fadeout(self.sample_rate);
+                        }
                     }
+                    self.voices[self.active_voice].trigger(
+                        params,
+                        vel,
+                        &mut self.drift,
+                        self.sample_rate,
+                    );
                 }
-                self.voices[self.active_voice].trigger(
-                    params,
-                    vel,
-                    &mut self.drift,
-                    self.sample_rate,
-                );
             }
 
             // Sum all voices (some may be fading out).
@@ -890,153 +916,86 @@ mod tests {
         assert!(a.iter().all(|&x| x != 0));
     }
 
-    // ---- Flam: schedule_group ----
+    // ---- Flam: schedule_ghost ----
 
     #[test]
-    fn schedule_group_flam_two_hits() {
+    fn schedule_ghost_fires_after_gap() {
         let mut eng = KickEngine::new(48000.0);
         let gap = 720;
-        eng.schedule_group(2, gap, 0.0, 1.0);
-        let mut fired: Vec<(usize, f32)> = Vec::new();
+        eng.schedule_ghost(gap, 0.0);
+        let mut fired_at: Option<usize> = None;
         for sample in 0..2000 {
-            for v in eng.tick_pending_for_test() {
-                fired.push((sample, v));
+            if !eng.tick_pending_for_test().is_empty() {
+                fired_at = Some(sample);
+                break;
             }
         }
-        assert_eq!(fired.len(), 2);
-        assert_eq!(fired[0].0, 0);
-        assert!((fired[0].1 - 0.7).abs() < 1e-6);
-        assert_eq!(fired[1].0, gap as usize);
-        assert!((fired[1].1 - 1.0).abs() < 1e-6);
+        assert_eq!(fired_at, Some(gap as usize));
     }
 
     #[test]
-    fn schedule_group_ruff_three_hits() {
+    fn schedule_ghost_humanize_zero_is_exact() {
         let mut eng = KickEngine::new(48000.0);
-        let gap = 480;
-        eng.schedule_group(3, gap, 0.0, 1.0);
-        let mut fired: Vec<(usize, f32)> = Vec::new();
+        eng.seed_rng_for_test(12345);
+        eng.schedule_ghost(480, 0.0);
+        let mut fired_at: Option<usize> = None;
         for sample in 0..2000 {
-            for v in eng.tick_pending_for_test() {
-                fired.push((sample, v));
+            if !eng.tick_pending_for_test().is_empty() {
+                fired_at = Some(sample);
+                break;
             }
         }
-        assert_eq!(fired.len(), 3);
-        assert_eq!(fired[0].0, 0);
-        assert_eq!(fired[1].0, gap as usize);
-        assert_eq!(fired[2].0, (2 * gap) as usize);
-        let expected = [0.7, 0.85, 1.0];
-        for (a, e) in fired.iter().zip(expected.iter()) {
-            assert!((a.1 - e).abs() < 1e-6);
-        }
+        assert_eq!(fired_at, Some(480));
     }
 
     #[test]
-    fn schedule_group_roll_four_hits() {
-        let mut eng = KickEngine::new(48000.0);
-        let gap = 480;
-        eng.schedule_group(4, gap, 0.0, 1.0);
-        let mut fired: Vec<(usize, f32)> = Vec::new();
-        for sample in 0..3000 {
-            for v in eng.tick_pending_for_test() {
-                fired.push((sample, v));
-            }
-        }
-        assert_eq!(fired.len(), 4);
-        for (i, f) in fired.iter().enumerate() {
-            assert_eq!(f.0, i * gap as usize);
-        }
-        let expected = [0.6, 0.75, 0.85, 1.0];
-        for (a, e) in fired.iter().zip(expected.iter()) {
-            assert!((a.1 - e).abs() < 1e-6);
-        }
-    }
-
-    #[test]
-    fn schedule_group_single_hit_is_immediate() {
-        let mut eng = KickEngine::new(48000.0);
-        eng.schedule_group(1, 480, 0.0, 0.9);
-        let fired = eng.tick_pending_for_test();
-        assert_eq!(fired, vec![0.9]);
-    }
-
-    #[test]
-    fn humanize_one_bounded_timing_and_velocity_jitter() {
+    fn schedule_ghost_humanize_one_bounded() {
         let mut eng = KickEngine::new(48000.0);
         eng.seed_rng_for_test(42);
         let gap: u32 = 720;
-        let mut max_t_dev = 0i64;
-        let mut max_v_dev = 0f32;
+        let mut max_dev = 0i64;
         for _ in 0..200 {
-            eng.schedule_group(4, gap, 1.0, 1.0);
-            let mut fired: Vec<(usize, f32)> = Vec::new();
-            for sample in 0..4000 {
-                for v in eng.tick_pending_for_test() {
-                    fired.push((sample, v));
+            eng.schedule_ghost(gap, 1.0);
+            for sample in 0..4000i64 {
+                if !eng.tick_pending_for_test().is_empty() {
+                    max_dev = max_dev.max((sample - gap as i64).abs());
+                    break;
                 }
             }
-            assert_eq!(fired.len(), 4);
-            // First hit is anchored at offset 0 (no timing jitter). Check hit 1.
-            let t_dev = fired[1].0 as i64 - gap as i64;
-            let v_dev = (fired[0].1 - 0.6).abs();
-            max_t_dev = max_t_dev.max(t_dev.abs());
-            max_v_dev = max_v_dev.max(v_dev);
         }
-        assert!(max_t_dev <= 150, "t dev {max_t_dev} exceeds 150 samples");
-        assert!(max_v_dev <= 0.07, "v dev {max_v_dev} exceeds 0.07");
+        assert!(max_dev <= 150, "ghost timing dev {max_dev} exceeds 150 samples");
     }
 
     #[test]
-    fn humanize_zero_is_exact_regardless_of_seed() {
-        let mut eng = KickEngine::new(48000.0);
-        eng.seed_rng_for_test(12345);
-        for _ in 0..50 {
-            let _ = eng.rng_u32_for_test();
-        }
-        eng.schedule_group(3, 480, 0.0, 1.0);
-        let mut fired: Vec<(usize, f32)> = Vec::new();
-        for sample in 0..2000 {
-            for v in eng.tick_pending_for_test() {
-                fired.push((sample, v));
-            }
-        }
-        assert_eq!(fired.len(), 3);
-        assert_eq!(fired[0].0, 0);
-        assert_eq!(fired[1].0, 480);
-        assert_eq!(fired[2].0, 960);
-        let expected = [0.7, 0.85, 1.0];
-        for (a, e) in fired.iter().zip(expected.iter()) {
-            assert!((a.1 - e).abs() < 1e-6);
-        }
-    }
-
-    #[test]
-    fn schedule_group_fires_hits_via_process() {
+    fn ghost_hit_does_not_retrigger_sub_pitch() {
+        // Main hit + ghost: the main voice's sub pitch sweep should not
+        // restart when the ghost fires. We check by verifying the voice
+        // count stays at 1 after the ghost (no voice stealing).
         let mut eng = KickEngine::new(48000.0);
         let params = KickParams::default();
-        eng.schedule_group(2, 480, 0.0, 1.0);
+        eng.trigger(&params, 1.0);
+        let voice_before = eng.active_voice;
+        eng.schedule_ghost(240, 0.0);
+        let mut left = vec![0.0f32; 600];
+        let mut right = vec![0.0f32; 600];
+        eng.process(&mut left, &mut right, &params);
+        assert_eq!(eng.active_voice, voice_before, "ghost must not steal a fresh voice");
+    }
+
+    #[test]
+    fn ghost_hit_adds_energy_to_output() {
+        let mut eng = KickEngine::new(48000.0);
+        let params = KickParams::default();
+        eng.trigger(&params, 1.0);
+        eng.schedule_ghost(480, 0.0);
         let mut left = vec![0.0f32; 1200];
         let mut right = vec![0.0f32; 1200];
         eng.process(&mut left, &mut right, &params);
-
+        // Window around the ghost fire sample should contain audible signal.
         let rms = |slice: &[f32]| -> f32 {
             (slice.iter().map(|x| x * x).sum::<f32>() / slice.len() as f32).sqrt()
         };
-        let rms_hit0 = rms(&left[0..64]);
-        let rms_hit1 = rms(&left[480..544]);
-        assert!(rms_hit0 > 1e-4, "hit 0 window silent: {rms_hit0}");
-        assert!(rms_hit1 > 1e-4, "hit 1 window silent: {rms_hit1}");
-    }
-
-    #[test]
-    fn four_voice_pool_handles_roll() {
-        let mut eng = KickEngine::new(48000.0);
-        let params = KickParams::default();
-        eng.schedule_group(4, 480, 0.0, 1.0);
-        let mut left = vec![0.0f32; 4800];
-        let mut right = vec![0.0f32; 4800];
-        eng.process(&mut left, &mut right, &params);
-        let total_energy: f32 = left.iter().map(|x| x * x).sum();
-        assert!(total_energy > 0.01, "roll produced near-zero signal: {total_energy}");
+        let rms_ghost = rms(&left[480..544]);
+        assert!(rms_ghost > 1e-4, "ghost window silent: {rms_ghost}");
     }
 }

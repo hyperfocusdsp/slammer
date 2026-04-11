@@ -5,7 +5,7 @@
 //! triggers) via plain atomics — no locks, RT-safe.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use parking_lot::Mutex;
 
@@ -19,11 +19,6 @@ const MAX_BPM: f32 = 240.0;
 
 pub struct Sequencer {
     pub steps: [AtomicBool; STEPS],
-    /// Per-step flam state. 0 = Off, 1 = Flam (2 hits), 2 = Ruff (3 hits),
-    /// 3 = Roll (4 hits). Written by the UI thread via `cycle_flam_state`,
-    /// read by the audio thread on step-boundary to decide how many hits
-    /// to schedule via `KickEngine::schedule_group`.
-    pub flam_state: [AtomicU8; STEPS],
     /// User-controlled run flag (standalone only — ignored when `host_synced`).
     pub running: AtomicBool,
     /// Standalone BPM stored as milli-BPM so we can use an integer atomic.
@@ -50,33 +45,14 @@ pub struct Sequencer {
     /// persistence. The audio thread never touches this — only the UI
     /// thread (via `toggle_step` / `set_step`) and `initialize()`.
     persist_mirror: Arc<Mutex<u16>>,
-    /// UI-thread mirror of the per-step flam state (2 bits × 16 steps,
-    /// packed into a u64). Written by `cycle_flam_state` / `set_step`,
-    /// read back by `restore_from_persist`.
-    flam_persist_mirror: Arc<Mutex<u64>>,
 }
 
 impl Sequencer {
-    /// Build a new sequencer. The `persist_mirror` is the same
-    /// `Arc<Mutex<u16>>` stored on `SlammerParams` as a `#[persist]` field;
-    /// passing it in here lets the UI thread keep the serialized pattern
-    /// in sync with the live atomics on every edit. The initial atomic
-    /// state is seeded from the mirror's current value, so DAW-restored
-    /// state wins over the 4/4 default, and fresh instances (which carry
-    /// the `DEFAULT_STEP_BITS` default on the mirror) come up with a
-    /// four-on-the-floor kick pattern.
-    pub fn new(
-        persist_mirror: Arc<Mutex<u16>>,
-        flam_persist_mirror: Arc<Mutex<u64>>,
-    ) -> Self {
+    pub fn new(persist_mirror: Arc<Mutex<u16>>) -> Self {
         let initial_bits = *persist_mirror.lock();
-        let initial_flam = *flam_persist_mirror.lock();
         Self {
             steps: std::array::from_fn(|i| {
                 AtomicBool::new((initial_bits >> i) & 1 != 0)
-            }),
-            flam_state: std::array::from_fn(|i| {
-                AtomicU8::new(((initial_flam >> (i * 2)) & 0b11) as u8)
             }),
             running: AtomicBool::new(false),
             bpm_milli: AtomicU32::new((DEFAULT_BPM * 1000.0) as u32),
@@ -86,7 +62,6 @@ impl Sequencer {
             running_effective: AtomicBool::new(false),
             transport_probed: AtomicBool::new(false),
             persist_mirror,
-            flam_persist_mirror,
         }
     }
 
@@ -98,11 +73,6 @@ impl Sequencer {
         let bits = *self.persist_mirror.lock();
         for i in 0..STEPS {
             self.steps[i].store((bits >> i) & 1 != 0, Ordering::Relaxed);
-        }
-        let flam_bits = *self.flam_persist_mirror.lock();
-        for i in 0..STEPS {
-            let st = ((flam_bits >> (i * 2)) & 0b11) as u8;
-            self.flam_state[i].store(st, Ordering::Relaxed);
         }
     }
 
@@ -137,27 +107,6 @@ impl Sequencer {
         self.steps[idx].load(Ordering::Relaxed)
     }
 
-    /// Audio-thread read: current per-step flam state (0..=3). 0 = single
-    /// hit (no flam), 1 = Flam (2 hits), 2 = Ruff (3), 3 = Roll (4).
-    pub fn flam_state(&self, idx: usize) -> u8 {
-        self.flam_state[idx].load(Ordering::Relaxed)
-    }
-
-    /// UI-thread only: advance the per-step flam state through
-    /// Off → Flam → Ruff → Roll → Off. No-op when the step is currently
-    /// inactive, since a flam on a rest is meaningless.
-    pub fn cycle_flam_state(&self, idx: usize) {
-        if !self.is_step_on(idx) {
-            return;
-        }
-        let next = (self.flam_state[idx].load(Ordering::Relaxed) + 1) & 0b11;
-        self.flam_state[idx].store(next, Ordering::Relaxed);
-        let mut bits = self.flam_persist_mirror.lock();
-        let shift = idx * 2;
-        *bits &= !(0b11u64 << shift);
-        *bits |= (next as u64) << shift;
-    }
-
     /// UI-thread only: flip a step on/off and mirror the change into the
     /// persist bitmask.
     pub fn toggle_step(&self, idx: usize) {
@@ -172,11 +121,6 @@ impl Sequencer {
     /// idempotent (unlike `toggle_step`, which would oscillate).
     pub fn set_step(&self, idx: usize, on: bool) {
         self.steps[idx].store(on, Ordering::Relaxed);
-        if !on {
-            self.flam_state[idx].store(0, Ordering::Relaxed);
-            let mut fbits = self.flam_persist_mirror.lock();
-            *fbits &= !(0b11u64 << (idx * 2));
-        }
         let mut bits = self.persist_mirror.lock();
         if on {
             *bits |= 1u16 << idx;
@@ -201,85 +145,6 @@ impl Sequencer {
 
 impl Default for Sequencer {
     fn default() -> Self {
-        Self::new(
-            Arc::new(Mutex::new(DEFAULT_STEP_BITS)),
-            Arc::new(Mutex::new(0)),
-        )
-    }
-}
-
-#[cfg(test)]
-mod flam_state_tests {
-    use super::*;
-
-    #[test]
-    fn flam_state_default_off() {
-        let seq = Sequencer::default();
-        for i in 0..STEPS {
-            assert_eq!(seq.flam_state(i), 0);
-        }
-    }
-
-    #[test]
-    fn cycle_flam_state_walks_four_states() {
-        let seq = Sequencer::default();
-        seq.set_step(0, true);
-        assert_eq!(seq.flam_state(0), 0);
-        seq.cycle_flam_state(0);
-        assert_eq!(seq.flam_state(0), 1);
-        seq.cycle_flam_state(0);
-        assert_eq!(seq.flam_state(0), 2);
-        seq.cycle_flam_state(0);
-        assert_eq!(seq.flam_state(0), 3);
-        seq.cycle_flam_state(0);
-        assert_eq!(seq.flam_state(0), 0);
-    }
-
-    #[test]
-    fn turning_step_off_clears_flam_state() {
-        let seq = Sequencer::default();
-        seq.set_step(5, true);
-        seq.cycle_flam_state(5);
-        seq.cycle_flam_state(5);
-        assert_eq!(seq.flam_state(5), 2);
-        seq.set_step(5, false);
-        assert_eq!(seq.flam_state(5), 0);
-    }
-
-    #[test]
-    fn flam_persist_roundtrip() {
-        let mirror = Arc::new(Mutex::new(DEFAULT_STEP_BITS));
-        let flam_mirror = Arc::new(Mutex::new(0u64));
-        let seq = Sequencer::new(Arc::clone(&mirror), Arc::clone(&flam_mirror));
-        // Turn steps on so cycle_flam_state is not a no-op
-        seq.set_step(0, true);
-        seq.set_step(4, true);
-        seq.set_step(8, true);
-        seq.cycle_flam_state(0); // 1
-        seq.cycle_flam_state(4); // 1
-        seq.cycle_flam_state(4); // 2
-        seq.cycle_flam_state(8); // 1
-        seq.cycle_flam_state(8); // 2
-        seq.cycle_flam_state(8); // 3
-
-        let bits = *flam_mirror.lock();
-        assert_eq!((bits >> 0) & 0b11, 1);
-        assert_eq!((bits >> 8) & 0b11, 2);
-        assert_eq!((bits >> 16) & 0b11, 3);
-
-        // Fresh sequencer built from same mirrors should restore identical state.
-        let seq2 = Sequencer::new(Arc::clone(&mirror), Arc::clone(&flam_mirror));
-        seq2.restore_from_persist();
-        assert_eq!(seq2.flam_state(0), 1);
-        assert_eq!(seq2.flam_state(4), 2);
-        assert_eq!(seq2.flam_state(8), 3);
-    }
-
-    #[test]
-    fn cycle_on_inactive_step_is_noop() {
-        let seq = Sequencer::default();
-        seq.set_step(7, false);
-        seq.cycle_flam_state(7);
-        assert_eq!(seq.flam_state(7), 0);
+        Self::new(Arc::new(Mutex::new(DEFAULT_STEP_BITS)))
     }
 }

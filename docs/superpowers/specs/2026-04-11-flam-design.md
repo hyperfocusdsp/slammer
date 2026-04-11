@@ -212,7 +212,7 @@ The engine is a test double (`trait TriggerSink` with a fake that records `(samp
 
 ### Manual DAW verification (add to pending list in `project_slammer_state.md`)
 
-- Flam / Ruff / Roll audibly distinct in Bitwig on a loaded factory preset.
+- Flam / Ruff / Roll audibly distinct in Renoise on a loaded factory preset.
 - Humanize knob sweep 0 → 1 produces clearly increasing jitter without the pattern losing sync.
 - Right-click cycle discoverable; dots render cleanly and don't clip the playhead ring.
 - Pattern with heavy flam state survives save / reload round-trip.
@@ -238,7 +238,8 @@ After flam ships, the following features are next, in recommended order of impac
 
 1. **EQ restructure for intent-based naming** — replace the current `tilt / low_boost / notch_freq / notch_q / notch_depth` EQ row with `PUNCH / BODY / CLICK / TILT` (peaking EQ at 80 Hz / 200 Hz, high shelf at 3 kHz, overall tone tilt). Biggest UX impact; breaks old presets' notch settings (graceful default on load). Spec to be written when pulled in.
 2. **Per-voice low-cut on SUB and MID** — 12 dB/oct HPF biquad per voice, `sub_lowcut_hz` and `mid_lowcut_hz` params (20–400 Hz skewed, 20 Hz = bypassed). Cheap; composes with the new EQ to cleanly separate *layer shaping* (per-voice HPF) from *bus shaping* (master EQ). TOP is excluded — it's a transient click, HPF would gut it.
-3. **Compressor shape controls** — split the current `REACT` macro into explicit `ATTACK` (1.5–30 ms) and `RELEASE` (40–400 ms) knobs; add `KNEE` (0–12 dB soft knee). Keeps `AMT` and `DRV` and `LIM` unchanged. Refinement of the shipped comp.
+
+The master compressor surface (AMT / RCT / DRV + LIM) is final — no expansion into ATTACK/RELEASE/KNEE. The 3-macro design is deliberate and ships as-is.
 
 None of these are part of this spec; they're recorded so the design intent is preserved when they're pulled in.
 

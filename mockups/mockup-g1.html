@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SLAMMER - G1: Refined Black</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0a; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+  canvas { box-shadow: 0 10px 40px rgba(0,0,0,0.9); }
+  .label { color: #555; text-align: center; margin-top: 12px; font-size: 12px; font-family: monospace; }
+</style>
+</head>
+<body>
+<div>
+<canvas id="c" width="680" height="380"></canvas>
+<div class="label">G1: Black Powder Coat &middot; Metal Core + Rubber Grip Knobs &middot; 7-Segment LED</div>
+</div>
+<script>
+const W = 680, H = 380;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+const RED = '#ff1a1a';
+const RED_GLOW = 'rgba(255,25,20,0.12)';
+const WHITE = '#ddd';
+const WHITE_DIM = 'rgba(200,200,200,0.3)';
+
+function rand(seed) {
+  let s = seed;
+  return () => { s = (s * 16807 + 0) % 2147483647; return s / 2147483647; };
+}
+
+// ---- 7-SEGMENT FONT ----
+// Each digit maps to 7 segments: a(top) b(top-right) c(bot-right) d(bot) e(bot-left) f(top-left) g(mid)
+const SEGS = {
+  '0': [1,1,1,1,1,1,0], '1': [0,1,1,0,0,0,0], '2': [1,1,0,1,1,0,1],
+  '3': [1,1,1,1,0,0,1], '4': [0,1,1,0,0,1,1], '5': [1,0,1,1,0,1,1],
+  '6': [1,0,1,1,1,1,1], '7': [1,1,1,0,0,0,0], '8': [1,1,1,1,1,1,1],
+  '9': [1,1,1,1,0,1,1], 'A': [1,1,1,0,1,1,1], 'B': [0,0,1,1,1,1,1],
+  'C': [1,0,0,1,1,1,0], 'D': [0,1,1,1,1,0,1], 'E': [1,0,0,1,1,1,1],
+  'F': [1,0,0,0,1,1,1], 'I': [0,1,1,0,0,0,0], 'O': [1,1,1,1,1,1,0],
+  'P': [1,1,0,0,1,1,1], 'S': [1,0,1,1,0,1,1], 'T': [0,0,0,1,1,1,1],
+  'L': [0,0,0,1,1,1,0], 'H': [0,1,1,0,1,1,1], 'U': [0,1,1,1,1,1,0],
+  'N': [0,0,1,0,1,0,1], 'R': [0,0,0,0,1,0,1], 'G': [1,0,1,1,1,1,0],
+  ' ': [0,0,0,0,0,0,0], '-': [0,0,0,0,0,0,1],
+};
+
+function drawSegment(px, py, segW, segH, segIdx, lit, color, dimColor) {
+  // Segment positions relative to digit origin
+  const t = 1.2; // thickness
+  let points;
+  const sw = segW - 2;
+  const sh = (segH - 3) / 2;
+
+  switch(segIdx) {
+    case 0: // top horizontal
+      points = [[1, 0], [sw, 0], [sw - t, t], [1 + t, t]]; break;
+    case 1: // top-right vertical
+      points = [[sw, 0.5], [sw, sh + 0.5], [sw - t, sh - 0.5], [sw - t, 1]]; break;
+    case 2: // bot-right vertical
+      points = [[sw, sh + 2], [sw, sh * 2 + 2], [sw - t, sh * 2 + 1], [sw - t, sh + 2.5]]; break;
+    case 3: // bottom horizontal
+      points = [[1, sh * 2 + 2.5], [sw, sh * 2 + 2.5], [sw - t, sh * 2 + 2.5 - t], [1 + t, sh * 2 + 2.5 - t]]; break;
+    case 4: // bot-left vertical
+      points = [[0.5, sh + 2], [0.5, sh * 2 + 2], [0.5 + t, sh * 2 + 1], [0.5 + t, sh + 2.5]]; break;
+    case 5: // top-left vertical
+      points = [[0.5, 0.5], [0.5, sh + 0.5], [0.5 + t, sh - 0.5], [0.5 + t, 1]]; break;
+    case 6: // middle horizontal
+      points = [[1, sh + 1.2], [sw, sh + 1.2], [sw - t, sh + 1.2 + t * 0.4], [1 + t, sh + 1.2 + t * 0.4]];
+      const pts2 = [[1, sh + 1.2], [sw, sh + 1.2], [sw - t, sh + 1.2 - t * 0.4], [1 + t, sh + 1.2 - t * 0.4]];
+      // Draw middle as diamond shape
+      ctx.beginPath();
+      ctx.moveTo(px + 1, py + sh + 1.2);
+      ctx.lineTo(px + 1 + t, py + sh + 1.2 - t * 0.5);
+      ctx.lineTo(px + sw - t, py + sh + 1.2 - t * 0.5);
+      ctx.lineTo(px + sw, py + sh + 1.2);
+      ctx.lineTo(px + sw - t, py + sh + 1.2 + t * 0.5);
+      ctx.lineTo(px + 1 + t, py + sh + 1.2 + t * 0.5);
+      ctx.closePath();
+      ctx.fillStyle = lit ? color : dimColor;
+      if (lit) {
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 3;
+      }
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      return;
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(px + points[0][0], py + points[0][1]);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(px + points[i][0], py + points[i][1]);
+  ctx.closePath();
+  ctx.fillStyle = lit ? color : dimColor;
+  if (lit) {
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 3;
+  }
+  ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
+function draw7SegChar(px, py, ch, charW, charH, color, dimColor) {
+  const segs = SEGS[ch.toUpperCase()] || SEGS[' '];
+  for (let i = 0; i < 7; i++) {
+    drawSegment(px, py, charW, charH, i, segs[i], color, dimColor);
+  }
+}
+
+function draw7SegText(x, y, w, h, text, charH) {
+  // Bezel
+  ctx.fillStyle = '#0a0a0a';
+  ctx.beginPath();
+  ctx.roundRect(x - 3, y - 3, w + 6, h + 6, 3);
+  ctx.fill();
+  // Inner shadow
+  ctx.beginPath();
+  ctx.moveTo(x + w + 1, y - 1);
+  ctx.lineTo(x - 1, y - 1);
+  ctx.lineTo(x - 1, y + h + 1);
+  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x - 1, y + h + 1);
+  ctx.lineTo(x + w + 1, y + h + 1);
+  ctx.lineTo(x + w + 1, y - 1);
+  ctx.strokeStyle = 'rgba(255,255,255,0.02)';
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+
+  // Screen
+  ctx.fillStyle = '#060202';
+  ctx.fillRect(x, y, w, h);
+
+  // Subtle scanlines
+  for (let sy = y; sy < y + h; sy += 2) {
+    ctx.fillStyle = 'rgba(0,0,0,0.12)';
+    ctx.fillRect(x, sy, w, 1);
+  }
+
+  // Red glow
+  const glow = ctx.createRadialGradient(x + w/2, y + h/2, 0, x + w/2, y + h/2, w * 0.6);
+  glow.addColorStop(0, 'rgba(50,5,5,0.3)');
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(x, y, w, h);
+
+  // Draw characters
+  if (text) {
+    const cW = charH * 0.6;
+    const gap = 2;
+    const totalW = text.length * (cW + gap) - gap;
+    let cx = x + (w - totalW) / 2;
+    const cy = y + (h - charH) / 2;
+    for (const ch of text) {
+      draw7SegChar(cx, cy, ch, cW, charH, RED, 'rgba(255,20,20,0.04)');
+      cx += cW + gap;
+    }
+  }
+}
+
+function drawLcdSelector(x, y, w, h, text) {
+  draw7SegText(x, y, w, h, text, h * 0.7);
+
+  const btnH = h + 4;
+  const btnW = 16;
+  for (const [bx, arrow] of [[x - btnW - 7, '\u25C0'], [x + w + 7, '\u25B6']]) {
+    const grad = ctx.createLinearGradient(bx, y - 2, bx, y - 2 + btnH);
+    grad.addColorStop(0, '#3a3a3a');
+    grad.addColorStop(0.4, '#2a2a2a');
+    grad.addColorStop(1, '#1a1a1a');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.roundRect(bx, y - 2, btnW, btnH, 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(bx + 2, y - 1.5);
+    ctx.lineTo(bx + btnW - 2, y - 1.5);
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(200,200,200,0.4)';
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(arrow, bx + btnW / 2, y - 2 + btnH / 2 + 3);
+  }
+}
+
+// ---- KNOB: metal core + rubber grip + white indicator ----
+function drawKnob(cx, cy, radius, value, label) {
+  const gripWidth = radius * 0.22;
+  const coreRadius = radius - gripWidth;
+
+  // Drop shadow
+  ctx.beginPath();
+  ctx.arc(cx + 1, cy + 3, radius + 1, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fill();
+
+  // Mounting hole (dark recess)
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius + 3, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fill();
+
+  // === Rubber grip ring ===
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  const gripGrad = ctx.createRadialGradient(cx, cy, coreRadius, cx, cy, radius);
+  gripGrad.addColorStop(0, '#2a2a2a');
+  gripGrad.addColorStop(0.3, '#222');
+  gripGrad.addColorStop(0.7, '#1c1c1c');
+  gripGrad.addColorStop(1, '#181818');
+  ctx.fillStyle = gripGrad;
+  ctx.fill();
+
+  // Grip ridges
+  const ridgeCount = 36;
+  for (let i = 0; i < ridgeCount; i++) {
+    const a = (i / ridgeCount) * Math.PI * 2;
+    const inner = coreRadius + 0.5;
+    const outer = radius - 0.3;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * inner, cy + Math.sin(a) * inner);
+    ctx.lineTo(cx + Math.cos(a) * outer, cy + Math.sin(a) * outer);
+    ctx.strokeStyle = i % 2 === 0 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.3)';
+    ctx.lineWidth = 0.6;
+    ctx.stroke();
+  }
+
+  // === Metal core ===
+  const coreGrad = ctx.createRadialGradient(cx - coreRadius * 0.2, cy - coreRadius * 0.25, coreRadius * 0.05, cx, cy, coreRadius);
+  coreGrad.addColorStop(0, '#c0c0c0');
+  coreGrad.addColorStop(0.15, '#aaa');
+  coreGrad.addColorStop(0.4, '#888');
+  coreGrad.addColorStop(0.7, '#666');
+  coreGrad.addColorStop(1, '#444');
+  ctx.beginPath();
+  ctx.arc(cx, cy, coreRadius, 0, Math.PI * 2);
+  ctx.fillStyle = coreGrad;
+  ctx.fill();
+
+  // Concentric brushing pattern
+  for (let r2 = coreRadius * 0.15; r2 < coreRadius; r2 += 0.6) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r2, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(255,255,255,${0.02 + Math.sin(r2 * 5) * 0.01})`;
+    ctx.lineWidth = 0.25;
+    ctx.stroke();
+  }
+
+  // Edge bevel on core
+  ctx.beginPath();
+  ctx.arc(cx, cy, coreRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+
+  // === White indicator — slim rectangle like a watch marker ===
+  const ang = Math.PI * 0.75 + Math.PI * 1.5 * value;
+  const indLen = coreRadius * 0.38;
+  const indW = 1.6;
+  const indStart = coreRadius * 0.2;
+  const indEnd = indStart + indLen;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(ang);
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(-indW/2 + 0.5, -indEnd + 0.5, indW, indLen);
+  // White rectangle
+  ctx.fillStyle = '#eee';
+  ctx.fillRect(-indW/2, -indEnd, indW, indLen);
+  // Subtle highlight on top edge
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.fillRect(-indW/2, -indEnd, indW, 0.5);
+  ctx.restore();
+
+  // === Tick marks around outside ===
+  for (let i = 0; i <= 10; i++) {
+    const a = Math.PI * 0.75 + Math.PI * 1.5 * (i / 10);
+    const inner = radius + 4;
+    const outer = radius + (i % 5 === 0 ? 8 : 6);
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * inner, cy + Math.sin(a) * inner);
+    ctx.lineTo(cx + Math.cos(a) * outer, cy + Math.sin(a) * outer);
+    ctx.strokeStyle = i % 5 === 0 ? 'rgba(200,200,200,0.4)' : 'rgba(200,200,200,0.18)';
+    ctx.lineWidth = i % 5 === 0 ? 1 : 0.5;
+    ctx.stroke();
+  }
+
+  // Label
+  ctx.font = '7px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = WHITE;
+  ctx.fillText(label, cx, cy + radius + 20);
+}
+
+// ---- PANEL ----
+function drawPanel(seed) {
+  const r = rand(seed);
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#1e1e1e');
+  grad.addColorStop(0.08, '#161616');
+  grad.addColorStop(0.5, '#131313');
+  grad.addColorStop(0.92, '#161616');
+  grad.addColorStop(1, '#1e1e1e');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Texture
+  for (let i = 0; i < W * H * 0.3; i++) {
+    const px = r() * W, py = r() * H;
+    const v = r();
+    ctx.fillStyle = v > 0.5 ? `rgba(255,255,255,${(v-0.5)*0.04})` : `rgba(0,0,0,${(0.5-v)*0.06})`;
+    ctx.fillRect(px, py, 1, 1);
+  }
+
+  for (let i = 0; i < 10; i++) {
+    const sx = r() * W, sy = r() * H;
+    const angle = r() * Math.PI;
+    const len = 15 + r() * 45;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx + Math.cos(angle) * len, sy + Math.sin(angle) * len);
+    ctx.strokeStyle = `rgba(255,255,255,${0.01 + r()*0.02})`;
+    ctx.lineWidth = 0.3;
+    ctx.stroke();
+  }
+
+  // Rack ears
+  const earW = 16;
+  for (const ex of [0, W - earW]) {
+    ctx.fillStyle = '#141414';
+    ctx.fillRect(ex, 0, earW, H);
+    for (let i = 0; i < 7; i++) {
+      ctx.fillStyle = '#090909';
+      ctx.beginPath();
+      ctx.roundRect(ex + 4, 38 + i * 46, 8, 22, 2);
+      ctx.fill();
+    }
+  }
+  ctx.beginPath();
+  ctx.moveTo(0, 0.5);
+  ctx.lineTo(W, 0.5);
+  ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+}
+
+function drawScrew(cx, cy, size) {
+  const grad = ctx.createRadialGradient(cx - 0.5, cy - 0.5, 0, cx, cy, size);
+  grad.addColorStop(0, '#aaa'); grad.addColorStop(0.3, '#888');
+  grad.addColorStop(0.7, '#555'); grad.addColorStop(1, '#2a2a2a');
+  ctx.beginPath();
+  ctx.arc(cx, cy, size, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (i/6) * Math.PI * 2 - Math.PI/6;
+    const hx = cx + Math.cos(a) * size * 0.38;
+    const hy = cy + Math.sin(a) * size * 0.38;
+    if (i === 0) ctx.moveTo(hx, hy); else ctx.lineTo(hx, hy);
+  }
+  ctx.closePath();
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fill();
+}
+
+function drawGroove(y) {
+  ctx.beginPath(); ctx.moveTo(24, y); ctx.lineTo(W - 24, y);
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(24, y + 1); ctx.lineTo(W - 24, y + 1);
+  ctx.strokeStyle = 'rgba(255,255,255,0.02)'; ctx.lineWidth = 0.5; ctx.stroke();
+}
+
+function drawLed(cx, cy, on) {
+  ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2); ctx.fillStyle = '#080808'; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, 2.5, 0, Math.PI * 2); ctx.fillStyle = on ? RED : '#2a0808'; ctx.fill();
+  if (on) { ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI * 2); ctx.fillStyle = RED_GLOW; ctx.fill(); }
+}
+
+// ===== RENDER =====
+drawPanel(42);
+
+// Rack screws
+drawScrew(8, 18, 5); drawScrew(8, H - 18, 5);
+drawScrew(W - 8, 18, 5); drawScrew(W - 8, H - 18, 5);
+
+// Header
+ctx.font = 'bold 18px monospace'; ctx.fillStyle = WHITE; ctx.textAlign = 'left';
+ctx.fillText('SLAMMER', 30, 28);
+drawLed(120, 22, true);
+ctx.font = '8px monospace'; ctx.fillStyle = '#555'; ctx.textAlign = 'right';
+ctx.fillText('KICK SYNTHESIZER', W - 30, 18);
+ctx.fillStyle = '#444'; ctx.fillText('v0.1.0', W - 30, 28);
+
+drawGroove(38);
+
+// === Waveform + Master ===
+draw7SegText(30, 48, 380, 54, '', 14);
+// Waveform
+ctx.save();
+ctx.beginPath(); ctx.rect(31, 49, 378, 52); ctx.clip();
+const rw = rand(55);
+for (let i = 0; i < 378; i++) {
+  const amp = Math.exp(-Math.abs(i-65)/30)*22 + Math.exp(-Math.abs(i-160)/45)*14;
+  const noise = (rw()-0.5)*amp*0.7;
+  const mid = 75;
+  ctx.fillStyle = 'rgba(255,25,20,0.25)';
+  ctx.fillRect(31+i, mid-Math.abs(noise), 1, Math.abs(noise)*2);
+}
+ctx.restore();
+ctx.font = '6px monospace'; ctx.fillStyle = 'rgba(255,25,20,0.2)'; ctx.textAlign = 'left';
+ctx.fillText('OUTPUT', 34, 58);
+
+drawKnob(450, 76, 17, 0.35, 'DECAY');
+drawKnob(502, 76, 17, 0.8, 'VEL');
+drawKnob(554, 76, 17, 0.5, 'MASTER');
+
+// === SUB ===
+const kS = 44, k0 = 78;
+const r2y = 120;
+// Label ABOVE groove
+ctx.font = 'bold 10px monospace'; ctx.fillStyle = WHITE; ctx.textAlign = 'left';
+ctx.fillText('SUB', 28, r2y - 4);
+// TOP label
+const topDivX = k0 + kS * 5 + 30;
+ctx.fillText('TOP', topDivX + 8, r2y - 4);
+
+drawGroove(r2y);
+
+for (const [i, lbl, val] of [[0,'GAIN',0.85],[1,'START',0.4],[2,'END',0.25],[3,'SWEEP',0.3],[4,'CURVE',0.45],[5,'PHASE',0.25]])
+  drawKnob(k0 + kS*i, r2y + 30, 15, val, lbl);
+
+// Vertical divider
+ctx.beginPath();
+ctx.moveTo(topDivX, r2y + 4);
+ctx.lineTo(topDivX, r2y + 58);
+ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+ctx.lineWidth = 1;
+ctx.stroke();
+
+const t0 = topDivX + 28;
+for (const [i, lbl, val] of [[0,'GAIN',0.25],[1,'DECAY',0.15],[2,'FREQ',0.5],[3,'BW',0.5]])
+  drawKnob(t0 + kS*i, r2y + 30, 15, val, lbl);
+
+// === MID ===
+const r3y = r2y + 72;
+ctx.font = 'bold 10px monospace'; ctx.fillStyle = WHITE; ctx.textAlign = 'left';
+ctx.fillText('MID', 28, r3y - 4);
+
+drawGroove(r3y);
+
+for (const [i, lbl, val] of [[0,'GAIN',0.5],[1,'START',0.5],[2,'END',0.3],[3,'SWEEP',0.2],[4,'CURVE',0.55],[5,'DECAY',0.3],[6,'TONE',0.7],[7,'NOISE',0.3],[8,'COLOR',0.4]])
+  drawKnob(k0 + kS*i, r3y + 30, 15, val, lbl);
+
+// === SAT + EQ ===
+const r5y = r3y + 72;
+ctx.font = 'bold 10px monospace'; ctx.fillStyle = WHITE; ctx.textAlign = 'left';
+ctx.fillText('SAT', 28, r5y - 4);
+const eqDivX = 268;
+ctx.fillText('EQ', eqDivX + 10, r5y - 4);
+
+drawGroove(r5y);
+
+drawLcdSelector(86, r5y + 14, 62, 22, 'DIODE');
+drawKnob(190, r5y + 30, 15, 0.5, 'DRIVE');
+drawKnob(234, r5y + 30, 15, 1.0, 'MIX');
+
+ctx.beginPath();
+ctx.moveTo(eqDivX, r5y + 4);
+ctx.lineTo(eqDivX, r5y + 58);
+ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+ctx.stroke();
+
+drawKnob(320, r5y + 30, 15, 0.5, 'TILT');
+drawKnob(364, r5y + 30, 15, 0.6, 'LOW');
+drawKnob(408, r5y + 30, 15, 0.4, 'NOTCH');
+drawKnob(452, r5y + 30, 15, 0.1, 'Q');
+drawKnob(496, r5y + 30, 15, 0.6, 'DEPTH');
+
+// Bottom
+drawGroove(H - 20);
+ctx.font = '7px monospace'; ctx.fillStyle = 'rgba(255,255,255,0.07)'; ctx.textAlign = 'center';
+ctx.fillText('REXIST INSTRUMENTS', W/2, H - 8);
+</script>
+</body>
+</html>

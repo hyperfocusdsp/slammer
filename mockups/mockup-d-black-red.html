@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SLAMMER - Mockup D: Black Steel / Red LED</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0a; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: monospace; }
+  canvas { box-shadow: 0 10px 40px rgba(0,0,0,0.9), 0 0 1px rgba(255,255,255,0.05); }
+  .label { color: #666; text-align: center; margin-top: 14px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div>
+<canvas id="c" width="680" height="380"></canvas>
+<div class="label">Mockup D: Black Powder Coat / Red 7-Segment / Brushed Aluminum Knobs</div>
+</div>
+<script>
+const W = 680, H = 380;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+const RED = '#ff2222';
+const RED_DIM = '#331111';
+const RED_GLOW = 'rgba(255,30,20,0.15)';
+const WHITE = '#e8e8e8';
+const WHITE_DIM = 'rgba(230,230,230,0.4)';
+const LABEL_WHITE = '#cccccc';
+
+function rand(seed) {
+  let s = seed;
+  return () => { s = (s * 16807 + 0) % 2147483647; return s / 2147483647; };
+}
+
+function drawPanel(x, y, w, h, seed) {
+  const r = rand(seed);
+  // Dark steel base
+  const grad = ctx.createLinearGradient(x, y, x, y + h);
+  grad.addColorStop(0, '#1c1c1c');
+  grad.addColorStop(0.08, '#161616');
+  grad.addColorStop(0.5, '#131313');
+  grad.addColorStop(0.92, '#161616');
+  grad.addColorStop(1, '#1c1c1c');
+  ctx.fillStyle = grad;
+  ctx.fillRect(x, y, w, h);
+
+  // Powder coat texture
+  for (let i = 0; i < w * h * 0.3; i++) {
+    const px = x + r() * w;
+    const py = y + r() * h;
+    const v = r();
+    ctx.fillStyle = v > 0.5
+      ? `rgba(255,255,255,${(v - 0.5) * 0.04})`
+      : `rgba(0,0,0,${(0.5 - v) * 0.06})`;
+    ctx.fillRect(px, py, 1, 1);
+  }
+
+  // Scratches
+  for (let i = 0; i < 10; i++) {
+    const sx = x + r() * w;
+    const sy = y + r() * h;
+    const angle = r() * Math.PI;
+    const len = 15 + r() * 50;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx + Math.cos(angle) * len, sy + Math.sin(angle) * len);
+    ctx.strokeStyle = `rgba(255,255,255,${0.01 + r() * 0.025})`;
+    ctx.lineWidth = 0.3 + r() * 0.3;
+    ctx.stroke();
+  }
+
+  // Rack ears
+  const earW = 16;
+  for (const ex of [x, x + w - earW]) {
+    ctx.fillStyle = '#171717';
+    ctx.fillRect(ex, y, earW, h);
+    // Vent slots
+    for (let i = 0; i < 7; i++) {
+      const sy = y + 40 + i * 46;
+      ctx.fillStyle = '#090909';
+      ctx.beginPath();
+      ctx.roundRect(ex + 4, sy, 8, 22, 2);
+      ctx.fill();
+    }
+  }
+
+  // Edge highlight top
+  ctx.beginPath();
+  ctx.moveTo(x, y + 0.5);
+  ctx.lineTo(x + w, y + 0.5);
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+}
+
+function drawScrew(cx, cy, size) {
+  const grad = ctx.createRadialGradient(cx - 0.5, cy - 0.5, 0, cx, cy, size);
+  grad.addColorStop(0, '#aaa');
+  grad.addColorStop(0.3, '#888');
+  grad.addColorStop(0.7, '#555');
+  grad.addColorStop(1, '#2a2a2a');
+  ctx.beginPath();
+  ctx.arc(cx, cy, size, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+  // Hex socket
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 - Math.PI / 6;
+    const hx = cx + Math.cos(a) * size * 0.38;
+    const hy = cy + Math.sin(a) * size * 0.38;
+    if (i === 0) ctx.moveTo(hx, hy); else ctx.lineTo(hx, hy);
+  }
+  ctx.closePath();
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fill();
+}
+
+function drawBrushedKnob(cx, cy, radius, value, label) {
+  // Shadow
+  ctx.beginPath();
+  ctx.arc(cx + 1, cy + 3, radius + 2, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fill();
+
+  // Recessed ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius + 3, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fill();
+
+  // Main knob body — brushed aluminum
+  const kgrad = ctx.createRadialGradient(cx - radius * 0.2, cy - radius * 0.25, radius * 0.1, cx, cy, radius);
+  kgrad.addColorStop(0, '#b0b0b0');
+  kgrad.addColorStop(0.2, '#999');
+  kgrad.addColorStop(0.5, '#777');
+  kgrad.addColorStop(0.8, '#555');
+  kgrad.addColorStop(1, '#3a3a3a');
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = kgrad;
+  ctx.fill();
+
+  // Concentric brushing rings
+  for (let r2 = radius * 0.3; r2 < radius; r2 += 0.8) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r2, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(255,255,255,${0.03 + Math.sin(r2 * 3) * 0.015})`;
+    ctx.lineWidth = 0.3;
+    ctx.stroke();
+  }
+
+  // Knurled edge
+  for (let a = 0; a < Math.PI * 2; a += Math.PI / 24) {
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * (radius - 0.8), cy + Math.sin(a) * (radius - 0.8));
+    ctx.lineTo(cx + Math.cos(a) * (radius + 0.3), cy + Math.sin(a) * (radius + 0.3));
+    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+  }
+
+  // LED indicator dot
+  const ang = Math.PI * 0.75 + Math.PI * 1.5 * value;
+  const dotR = Math.max(1.8, radius * 0.1);
+  const dotX = cx + Math.cos(ang) * radius * 0.7;
+  const dotY = cy + Math.sin(ang) * radius * 0.7;
+
+  // LED glow
+  ctx.beginPath();
+  ctx.arc(dotX, dotY, dotR * 3, 0, Math.PI * 2);
+  ctx.fillStyle = RED_GLOW;
+  ctx.fill();
+
+  // LED dot
+  ctx.beginPath();
+  ctx.arc(dotX, dotY, dotR, 0, Math.PI * 2);
+  ctx.fillStyle = RED;
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(dotX - 0.3, dotY - 0.3, dotR * 0.4, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.fill();
+
+  // Tick marks
+  for (let i = 0; i <= 10; i++) {
+    const a = Math.PI * 0.75 + Math.PI * 1.5 * (i / 10);
+    const inner = radius + 4;
+    const outer = radius + (i % 5 === 0 ? 9 : 7);
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * inner, cy + Math.sin(a) * inner);
+    ctx.lineTo(cx + Math.cos(a) * outer, cy + Math.sin(a) * outer);
+    ctx.strokeStyle = WHITE_DIM;
+    ctx.lineWidth = i % 5 === 0 ? 1 : 0.5;
+    ctx.stroke();
+  }
+
+  // Label — white silkscreen
+  ctx.font = '7px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = LABEL_WHITE;
+  ctx.fillText(label, cx, cy + radius + 22);
+}
+
+function draw7Seg(x, y, w, h, text) {
+  // Bezel
+  ctx.fillStyle = '#0c0c0c';
+  ctx.beginPath();
+  ctx.roundRect(x - 3, y - 3, w + 6, h + 6, 3);
+  ctx.fill();
+  // Inner bevel
+  ctx.beginPath();
+  ctx.moveTo(x - 2, y + h + 2);
+  ctx.lineTo(x - 2, y - 2);
+  ctx.lineTo(x + w + 2, y - 2);
+  ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x + w + 2, y - 2);
+  ctx.lineTo(x + w + 2, y + h + 2);
+  ctx.lineTo(x - 2, y + h + 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+  ctx.stroke();
+
+  // Screen
+  ctx.fillStyle = '#0a0202';
+  ctx.fillRect(x, y, w, h);
+
+  // Red glow behind text
+  const glow = ctx.createRadialGradient(x + w/2, y + h/2, 0, x + w/2, y + h/2, w * 0.5);
+  glow.addColorStop(0, 'rgba(60,5,5,0.4)');
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(x, y, w, h);
+
+  // 7-segment style text
+  ctx.fillStyle = RED;
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, x + w / 2, y + h / 2 + 5);
+
+  // Ghost segments (unlit)
+  ctx.globalAlpha = 0.08;
+  ctx.fillStyle = RED;
+  ctx.font = 'bold 12px monospace';
+  // Draw 8s behind to show unlit segments
+  const ghostText = '8'.repeat(text.replace(/[^a-zA-Z0-9]/g, '').length);
+  ctx.fillText(ghostText, x + w / 2, y + h / 2 + 5);
+  ctx.globalAlpha = 1;
+}
+
+function drawLcdSelector(x, y, w, h, text) {
+  draw7Seg(x, y, w, h, text);
+
+  // Arrow buttons
+  const btnH = h + 6;
+  const btnW = 16;
+
+  // Left
+  drawMetalBtn(x - btnW - 8, y - 3, btnW, btnH, '\u25C0');
+  // Right
+  drawMetalBtn(x + w + 8, y - 3, btnW, btnH, '\u25B6');
+}
+
+function drawMetalBtn(x, y, w, h, text) {
+  const grad = ctx.createLinearGradient(x, y, x, y + h);
+  grad.addColorStop(0, '#3a3a3a');
+  grad.addColorStop(0.3, '#2a2a2a');
+  grad.addColorStop(0.7, '#222');
+  grad.addColorStop(1, '#1a1a1a');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 2);
+  ctx.fill();
+
+  // Top edge
+  ctx.beginPath();
+  ctx.moveTo(x + 2, y + 0.5);
+  ctx.lineTo(x + w - 2, y + 0.5);
+  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+
+  ctx.fillStyle = WHITE_DIM;
+  ctx.font = '8px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, x + w / 2, y + h / 2 + 3);
+}
+
+function drawSectionLabel(x, y, text) {
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = WHITE;
+  ctx.fillText(text, x, y);
+}
+
+function drawLed(cx, cy, on) {
+  ctx.beginPath();
+  ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = on ? RED : RED_DIM;
+  ctx.fill();
+  if (on) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+    ctx.fillStyle = RED_GLOW;
+    ctx.fill();
+  }
+}
+
+function drawGroove(x1, x2, y) {
+  ctx.beginPath();
+  ctx.moveTo(x1, y);
+  ctx.lineTo(x2, y);
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x1, y + 1);
+  ctx.lineTo(x2, y + 1);
+  ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+}
+
+// ===== RENDER =====
+drawPanel(0, 0, W, H, 42);
+
+// Rack screws
+drawScrew(8, 18, 5);
+drawScrew(8, H - 18, 5);
+drawScrew(W - 8, 18, 5);
+drawScrew(W - 8, H - 18, 5);
+
+// Header
+ctx.font = 'bold 18px monospace';
+ctx.fillStyle = WHITE;
+ctx.textAlign = 'left';
+ctx.fillText('SLAMMER', 30, 30);
+drawLed(120, 24, true);
+
+ctx.font = '8px monospace';
+ctx.fillStyle = '#555';
+ctx.textAlign = 'right';
+ctx.fillText('KICK SYNTHESIZER', W - 30, 18);
+ctx.fillStyle = '#444';
+ctx.fillText('v0.1.0', W - 30, 30);
+
+drawGroove(26, W - 26, 40);
+
+// --- Waveform display ---
+draw7Seg(32, 50, 380, 54, '');
+// Waveform overlay
+ctx.save();
+ctx.beginPath();
+ctx.rect(33, 51, 378, 52);
+ctx.clip();
+const rw = rand(55);
+for (let i = 0; i < 378; i++) {
+  const amp = Math.exp(-Math.abs(i - 65) / 30) * 22 + Math.exp(-Math.abs(i - 160) / 45) * 14;
+  const noise = (rw() - 0.5) * amp * 0.7;
+  const mid = 77;
+  ctx.fillStyle = 'rgba(255,30,20,0.3)';
+  ctx.fillRect(33 + i, mid - Math.abs(noise), 1, Math.abs(noise) * 2);
+}
+ctx.restore();
+ctx.font = '6px monospace';
+ctx.fillStyle = 'rgba(255,30,20,0.3)';
+ctx.textAlign = 'left';
+ctx.fillText('OUTPUT', 36, 60);
+
+// Master knobs
+drawBrushedKnob(452, 78, 17, 0.35, 'DECAY');
+drawBrushedKnob(502, 78, 17, 0.8, 'VEL');
+drawBrushedKnob(554, 78, 17, 0.5, 'MASTER');
+
+drawGroove(30, W - 30, 114);
+
+// --- SUB ---
+const r2y = 128;
+drawSectionLabel(30, r2y, 'SUB');
+const kSpacing = 44;
+const kStart = 78;
+drawBrushedKnob(kStart + kSpacing*0, r2y + 26, 14, 0.85, 'GAIN');
+drawBrushedKnob(kStart + kSpacing*1, r2y + 26, 14, 0.4, 'START');
+drawBrushedKnob(kStart + kSpacing*2, r2y + 26, 14, 0.25, 'END');
+drawBrushedKnob(kStart + kSpacing*3, r2y + 26, 14, 0.3, 'SWEEP');
+drawBrushedKnob(kStart + kSpacing*4, r2y + 26, 14, 0.45, 'CURVE');
+drawBrushedKnob(kStart + kSpacing*5, r2y + 26, 14, 0.25, 'PHASE');
+
+// Divider
+ctx.beginPath();
+ctx.moveTo(kStart + kSpacing*5 + 30, r2y - 6);
+ctx.lineTo(kStart + kSpacing*5 + 30, r2y + 52);
+ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+ctx.lineWidth = 1;
+ctx.stroke();
+
+// TOP
+const topStart = kStart + kSpacing*5 + 50;
+drawSectionLabel(topStart - 10, r2y, 'TOP');
+drawBrushedKnob(topStart + kSpacing*0, r2y + 26, 14, 0.25, 'GAIN');
+drawBrushedKnob(topStart + kSpacing*1, r2y + 26, 14, 0.15, 'DECAY');
+drawBrushedKnob(topStart + kSpacing*2, r2y + 26, 14, 0.5, 'FREQ');
+drawBrushedKnob(topStart + kSpacing*3, r2y + 26, 14, 0.5, 'BW');
+
+drawGroove(30, W - 30, r2y + 60);
+
+// --- MID ---
+const r3y = r2y + 74;
+drawSectionLabel(30, r3y, 'MID');
+drawBrushedKnob(kStart + kSpacing*0, r3y + 26, 14, 0.5, 'GAIN');
+drawBrushedKnob(kStart + kSpacing*1, r3y + 26, 14, 0.5, 'START');
+drawBrushedKnob(kStart + kSpacing*2, r3y + 26, 14, 0.3, 'END');
+drawBrushedKnob(kStart + kSpacing*3, r3y + 26, 14, 0.2, 'SWEEP');
+drawBrushedKnob(kStart + kSpacing*4, r3y + 26, 14, 0.55, 'CURVE');
+drawBrushedKnob(kStart + kSpacing*5, r3y + 26, 14, 0.3, 'DECAY');
+drawBrushedKnob(kStart + kSpacing*6, r3y + 26, 14, 0.7, 'TONE');
+drawBrushedKnob(kStart + kSpacing*7, r3y + 26, 14, 0.3, 'NOISE');
+drawBrushedKnob(kStart + kSpacing*8, r3y + 26, 14, 0.4, 'COLOR');
+
+drawGroove(30, W - 30, r3y + 60);
+
+// --- SAT + EQ ---
+const r5y = r3y + 76;
+drawSectionLabel(30, r5y, 'SAT');
+drawLcdSelector(86, r5y - 5, 62, 20, 'DIODE');
+drawBrushedKnob(190, r5y + 18, 14, 0.5, 'DRIVE');
+drawBrushedKnob(234, r5y + 18, 14, 1.0, 'MIX');
+
+ctx.beginPath();
+ctx.moveTo(268, r5y - 8);
+ctx.lineTo(268, r5y + 44);
+ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+ctx.lineWidth = 1;
+ctx.stroke();
+
+drawSectionLabel(282, r5y, 'EQ');
+drawBrushedKnob(326, r5y + 18, 14, 0.5, 'TILT');
+drawBrushedKnob(370, r5y + 18, 14, 0.6, 'LOW');
+drawBrushedKnob(414, r5y + 18, 14, 0.4, 'NOTCH');
+drawBrushedKnob(458, r5y + 18, 14, 0.1, 'Q');
+drawBrushedKnob(502, r5y + 18, 14, 0.6, 'DEPTH');
+
+// Brand
+ctx.font = '7px monospace';
+ctx.fillStyle = 'rgba(255,255,255,0.08)';
+ctx.textAlign = 'center';
+ctx.fillText('REXIST INSTRUMENTS', W / 2, H - 10);
+</script>
+</body>
+</html>

@@ -6,6 +6,7 @@
 
 use nih_plug::prelude::*;
 
+mod export;
 mod logging;
 mod params;
 mod plugin;

@@ -60,10 +60,7 @@ impl Default for Slammer {
         let (telem_tx, telem_rx) = telemetry::channel();
         let (ui_tx, ui_rx) = messages::channel();
         let params = Arc::new(SlammerParams::default());
-        let sequencer = Arc::new(Sequencer::new(
-            Arc::clone(&params.seq_steps),
-            Arc::clone(&params.seq_flam),
-        ));
+        let sequencer = Arc::new(Sequencer::new(Arc::clone(&params.seq_steps)));
         Self {
             params,
             engine: KickEngine::new(44100.0),
@@ -219,16 +216,14 @@ impl Plugin for Slammer {
                             .current_step
                             .store(new_step, Ordering::Relaxed);
                         if self.sequencer.steps[new_step].load(Ordering::Relaxed) {
-                            let n_hits = self.sequencer.flam_state[new_step]
-                                .load(Ordering::Relaxed)
-                                as usize
-                                + 1;
-                            let gap_samples = ((self.params.flam_spread_ms.value() * 0.001)
-                                * self.sample_rate)
-                                .round() as u32;
-                            let humanize = self.params.flam_humanize.value();
-                            self.engine
-                                .schedule_group(n_hits, gap_samples, humanize, 1.0);
+                            self.engine.trigger(&collect_kick_params(&self.params), 1.0);
+                            if self.params.flam_on.value() {
+                                let gap_samples = ((self.params.flam_spread_ms.value() * 0.001)
+                                    * self.sample_rate)
+                                    .round() as u32;
+                                let humanize = self.params.flam_humanize.value();
+                                self.engine.schedule_ghost(gap_samples, humanize);
+                            }
                         }
                     }
                 }
@@ -257,14 +252,14 @@ impl Plugin for Slammer {
                 self.seq_current_step = 0;
                 self.sequencer.current_step.store(0, Ordering::Relaxed);
                 if self.sequencer.steps[0].load(Ordering::Relaxed) {
-                    let n_hits =
-                        self.sequencer.flam_state[0].load(Ordering::Relaxed) as usize + 1;
-                    let gap_samples = ((self.params.flam_spread_ms.value() * 0.001)
-                        * self.sample_rate)
-                        .round() as u32;
-                    let humanize = self.params.flam_humanize.value();
-                    self.engine
-                        .schedule_group(n_hits, gap_samples, humanize, 1.0);
+                    self.engine.trigger(&collect_kick_params(&self.params), 1.0);
+                    if self.params.flam_on.value() {
+                        let gap_samples = ((self.params.flam_spread_ms.value() * 0.001)
+                            * self.sample_rate)
+                            .round() as u32;
+                        let humanize = self.params.flam_humanize.value();
+                        self.engine.schedule_ghost(gap_samples, humanize);
+                    }
                 }
             }
             self.seq_running_prev = running;
@@ -279,15 +274,14 @@ impl Plugin for Slammer {
                         .current_step
                         .store(self.seq_current_step, Ordering::Relaxed);
                     if self.sequencer.steps[self.seq_current_step].load(Ordering::Relaxed) {
-                        let step = self.seq_current_step;
-                        let n_hits =
-                            self.sequencer.flam_state[step].load(Ordering::Relaxed) as usize + 1;
-                        let gap_samples = ((self.params.flam_spread_ms.value() * 0.001)
-                            * self.sample_rate)
-                            .round() as u32;
-                        let humanize = self.params.flam_humanize.value();
-                        self.engine
-                            .schedule_group(n_hits, gap_samples, humanize, 1.0);
+                        self.engine.trigger(&collect_kick_params(&self.params), 1.0);
+                        if self.params.flam_on.value() {
+                            let gap_samples = ((self.params.flam_spread_ms.value() * 0.001)
+                                * self.sample_rate)
+                                .round() as u32;
+                            let humanize = self.params.flam_humanize.value();
+                            self.engine.schedule_ghost(gap_samples, humanize);
+                        }
                     }
                 }
             } else {
