@@ -6,11 +6,11 @@ use nih_plug::prelude::*;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-use crate::dsp::engine::{KickEngine, KickParams};
+use crate::dsp::engine::KickEngine;
 use crate::dsp::master_bus::MasterBus;
 use crate::dsp::tube::TubeWarmth;
 use crate::logging;
-use crate::params::SlammerParams;
+use crate::params::{collect_kick_params, SlammerParams};
 use crate::presets::PresetManager;
 use crate::sequencer::{self, Sequencer};
 use crate::util::messages::{self, UiToDsp};
@@ -79,54 +79,6 @@ impl Default for Slammer {
             host_ever_stopped: false,
             last_host_step: None,
             seq_running_prev: false,
-        }
-    }
-}
-
-impl Slammer {
-    /// Snapshot the current smoothed parameter values into a flat
-    /// `KickParams` struct that the DSP engine consumes per-block.
-    fn collect_params(&self) -> KickParams {
-        let p = &self.params;
-        KickParams {
-            master_gain: 1.0,
-            decay_ms: p.decay_ms.value(),
-            velocity_sens: p.velocity_sens.value(),
-
-            sub_gain: p.sub_gain.value(),
-            sub_fstart: p.sub_fstart.value(),
-            sub_fend: p.sub_fend.value(),
-            sub_sweep_ms: p.sub_sweep_ms.value(),
-            sub_sweep_curve: p.sub_sweep_curve.value(),
-            sub_phase_offset: p.sub_phase_offset.value().to_radians(),
-
-            mid_gain: p.mid_gain.value(),
-            mid_fstart: p.mid_fstart.value(),
-            mid_fend: p.mid_fend.value(),
-            mid_sweep_ms: p.mid_sweep_ms.value(),
-            mid_sweep_curve: p.mid_sweep_curve.value(),
-            mid_phase_offset: p.mid_phase_offset.value().to_radians(),
-            mid_decay_ms: p.mid_decay_ms.value(),
-            mid_tone_gain: p.mid_tone_gain.value(),
-            mid_noise_gain: p.mid_noise_gain.value(),
-            mid_noise_color: p.mid_noise_color.value(),
-
-            top_gain: p.top_gain.value(),
-            top_decay_ms: p.top_decay_ms.value(),
-            top_freq: p.top_freq.value(),
-            top_bw: p.top_bw.value(),
-
-            drift_amount: p.drift_amount.value(),
-
-            sat_mode: p.sat_mode.value() as u8,
-            sat_drive: p.sat_drive.value(),
-            sat_mix: p.sat_mix.value(),
-
-            eq_tilt_db: p.eq_tilt_db.value(),
-            eq_low_boost_db: p.eq_low_boost_db.value(),
-            eq_notch_freq: p.eq_notch_freq.value(),
-            eq_notch_q: p.eq_notch_q.value(),
-            eq_notch_depth_db: p.eq_notch_depth_db.value(),
         }
     }
 }
@@ -209,7 +161,7 @@ impl Plugin for Slammer {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let num_samples = buffer.samples();
-        let kick_params = self.collect_params();
+        let kick_params = collect_kick_params(&self.params);
 
         // Drain UI → DSP messages (lock-free, non-blocking).
         while let Ok(msg) = self.ui_rx.pop() {
@@ -264,7 +216,16 @@ impl Plugin for Slammer {
                             .current_step
                             .store(new_step, Ordering::Relaxed);
                         if self.sequencer.steps[new_step].load(Ordering::Relaxed) {
-                            self.engine.trigger(&kick_params, 1.0);
+                            let n_hits = self.sequencer.flam_state[new_step]
+                                .load(Ordering::Relaxed)
+                                as usize
+                                + 1;
+                            let gap_samples = ((self.params.flam_spread_ms.value() * 0.001)
+                                * self.sample_rate)
+                                .round() as u32;
+                            let humanize = self.params.flam_humanize.value();
+                            self.engine
+                                .schedule_group(n_hits, gap_samples, humanize, 1.0);
                         }
                     }
                 }
@@ -293,7 +254,14 @@ impl Plugin for Slammer {
                 self.seq_current_step = 0;
                 self.sequencer.current_step.store(0, Ordering::Relaxed);
                 if self.sequencer.steps[0].load(Ordering::Relaxed) {
-                    self.engine.trigger(&kick_params, 1.0);
+                    let n_hits =
+                        self.sequencer.flam_state[0].load(Ordering::Relaxed) as usize + 1;
+                    let gap_samples = ((self.params.flam_spread_ms.value() * 0.001)
+                        * self.sample_rate)
+                        .round() as u32;
+                    let humanize = self.params.flam_humanize.value();
+                    self.engine
+                        .schedule_group(n_hits, gap_samples, humanize, 1.0);
                 }
             }
             self.seq_running_prev = running;
@@ -308,7 +276,15 @@ impl Plugin for Slammer {
                         .current_step
                         .store(self.seq_current_step, Ordering::Relaxed);
                     if self.sequencer.steps[self.seq_current_step].load(Ordering::Relaxed) {
-                        self.engine.trigger(&kick_params, 1.0);
+                        let step = self.seq_current_step;
+                        let n_hits =
+                            self.sequencer.flam_state[step].load(Ordering::Relaxed) as usize + 1;
+                        let gap_samples = ((self.params.flam_spread_ms.value() * 0.001)
+                            * self.sample_rate)
+                            .round() as u32;
+                        let humanize = self.params.flam_humanize.value();
+                        self.engine
+                            .schedule_group(n_hits, gap_samples, humanize, 1.0);
                     }
                 }
             } else {
