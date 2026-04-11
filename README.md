@@ -15,29 +15,22 @@ interactive standalone editor.
 
 ## Listen
 
-Quick taste of what Slammer can do — every sample below is a single
-one-shot rendered straight out of the plugin via the BOUNCE button.
+Ten one-shots bounced straight out of the plugin via the BOUNCE button.
+Click any sample to play it in your browser.
 
-<table>
-<tr>
-<td align="center"><b>Clean BD</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/bd_clean.mp4" controls width="240"></video></td>
-<td align="center"><b>Tech BD</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/bd_tech.mp4" controls width="240"></video></td>
-<td align="center"><b>Hard Kick</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/hard.mp4" controls width="240"></video></td>
-</tr>
-<tr>
-<td align="center"><b>808</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/808.mp4" controls width="240"></video></td>
-<td align="center"><b>909</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/909.mp4" controls width="240"></video></td>
-<td align="center"><b>Clap</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/clap.mp4" controls width="240"></video></td>
-</tr>
-<tr>
-<td align="center"><b>Snare</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/sd.mp4" controls width="240"></video></td>
-<td align="center"><b>Low Tom</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/lowtom.mp4" controls width="240"></video></td>
-<td align="center"><b>High Tom</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/hitom.mp4" controls width="240"></video></td>
-</tr>
-<tr>
-<td align="center" colspan="3"><b>Hi-Hat</b><br><video src="https://github.com/Hornfisk/slammer/raw/master/docs/audio/hihat.mp4" controls width="240"></video></td>
-</tr>
-</table>
+**Kicks** &nbsp; · &nbsp;
+[Clean BD](docs/audio/bd_clean.mp3) &nbsp;·&nbsp;
+[Tech BD](docs/audio/bd_tech.mp3) &nbsp;·&nbsp;
+[Hard](docs/audio/hard.mp3) &nbsp;·&nbsp;
+[808](docs/audio/808.mp3) &nbsp;·&nbsp;
+[909](docs/audio/909.mp3)
+
+**Drums** &nbsp; · &nbsp;
+[Snare](docs/audio/sd.mp3) &nbsp;·&nbsp;
+[Clap](docs/audio/clap.mp3) &nbsp;·&nbsp;
+[Low Tom](docs/audio/lowtom.mp3) &nbsp;·&nbsp;
+[High Tom](docs/audio/hitom.mp3) &nbsp;·&nbsp;
+[Hi-Hat](docs/audio/hihat.mp3)
 
 ## Quick start
 
