@@ -1,10 +1,11 @@
 # Slammer
 
-A three-layer synthesized kick drum plugin. SUB sine, MID sine+noise,
-and a band-passed click TOP mix into a five-voice distortion palette, a
-tilt/low/notch master EQ, and a full master bus (RMS compressor →
-transformer drive → brickwall limiter → auto tube warmth). Ships with a
-16-step pattern sequencer, a factory + user preset browser, and a fully
+A three-layer synthesized kick drum plugin with a parallel 909-style
+clap voice. SUB sine, MID sine+noise, and a band-passed click TOP mix
+into a five-voice distortion palette, a tilt/low/notch master EQ, and a
+full master bus (RMS compressor → transformer drive → brickwall limiter
+→ auto tube warmth). Ships with a 16-step pattern sequencer, a factory
++ user preset browser, one-shot WAV/AIFF bounce, and a fully
 interactive standalone editor.
 
 ![Slammer](docs/slammer.png)
@@ -143,7 +144,7 @@ AU-only and will not see Slammer.
 ### Signal chain
 
 ```
-SUB + MID + TOP voices
+SUB + MID + TOP voices  (+ parallel CLAP voice)
   → per-voice saturation (5-mode palette)
   → master EQ (tilt / low shelf / notch)
   → master bus (RMS comp → transformer drive → brickwall limiter)
@@ -156,6 +157,10 @@ SUB + MID + TOP voices
 - **Three-layer kick engine** — SUB sine with pitch envelope, MID
   sine+noise blend, TOP bandpass-filtered click transient. Each layer
   has independent tuning, amp + pitch envelopes, and drift.
+- **909-style CLAP layer** — parallel voice, white noise → 2-pole SVF
+  bandpass → baked 3-burst + exponential tail envelope. Tunable
+  independently of the kick (level, center frequency 500–5000 Hz, tail
+  50–400 ms). Toggleable; bit-identical bypass when off.
 - **Five-voice distortion palette** — each mode is a genuinely
   different curve, not just gain+tanh:
   - *Sat Clip* — split-band rational hard-shoulder (`x/√(1+x²)`) with
@@ -167,9 +172,19 @@ SUB + MID + TOP voices
     blend with a feed-forward 60 Hz "bloom" filter.
   - *Master warmth* — asymmetric cubic bias shaper that auto-engages
     above 0 dB master volume; bit-exact bypass below unity.
-- **Master bus** — RMS compressor (3 macros: amount, reaction,
-  transformer drive), brickwall limiter with LED, per-sample metering.
+- **Master bus compressor** — three macros (Amount, Reaction,
+  Transformer drive) for fast moves, plus a precision strip with
+  independent Attack (0.3–50 ms), Release (20–800 ms), and soft Knee
+  (0–12 dB, Reiss & McPherson quadratic). Brickwall limiter LED, GR
+  meter. RCT acts as a link macro — moving it writes Attack and
+  Release together via the host parameter API. Knee = 0 is
+  bit-identical to a hard-knee path.
 - **Master EQ** — tilt, low shelf, and variable-Q notch.
+- **One-shot bounce** — render the current sound with the full chain
+  to a 16-bit / 44.1 kHz WAV or AIFF via a dedicated BOUNCE button.
+  Runs offline on the GUI thread against a fresh DSP instance, so live
+  audio keeps flowing during the render and the result is bit-for-bit
+  reproducible.
 
 ### UI
 
@@ -186,9 +201,13 @@ SUB + MID + TOP voices
   readout to arm, drag vertically to scrub, double-click to type a
   value, or use Left/Right arrows (±10, Shift for ±1). Host-synced
   mode keeps the readout read-only.
-- **Waveform scope** — live output waveform display with GR meter.
+- **Waveform scope** — live output waveform display fed post-comp, so
+  the trace visibly shrinks under compression and caps under the
+  limiter. GR meter sits next to it.
 - **Test trigger** — press `T` anywhere in the editor to fire a kick
   without MIDI.
+- **BOUNCE button** — one click renders a single hit, opens a native
+  save dialog (remembered between bounces), writes WAV or AIFF.
 
 ### Persistence
 
@@ -206,6 +225,7 @@ SUB + MID + TOP voices
 |---------------------------|-------------------------------------------|
 | `T` key                   | Fire a test kick                          |
 | MIDI NoteOn               | Trigger the engine (velocity → VEL knob)  |
+| BOUNCE button             | Render current sound to WAV / AIFF        |
 | Click + vertical drag     | Adjust any knob                           |
 | Shift + drag              | Fine control                              |
 | Ctrl + click (knob)       | Reset knob to default                     |
@@ -303,11 +323,17 @@ src/
 │   ├── envelope.rs     pitch + amp envelopes
 │   ├── noise.rs        colored noise generator
 │   ├── click.rs        pre-rendered bandpass click buffer
+│   ├── clap.rs         909-style parallel clap voice (bandpass + 3-burst env)
 │   ├── drift.rs        per-trigger analog-style pitch jitter
 │   ├── filter.rs       biquad + master EQ chain
 │   ├── saturation.rs   five-voice distortion palette (pre-EQ)
-│   ├── master_bus.rs   RMS comp + transformer drive + brickwall limiter
+│   ├── master_bus.rs   RMS comp (macro + precise) + transformer drive + limiter
 │   └── tube.rs         auto master warmth (post-bus, pre master-vol)
+│
+├── export/
+│   ├── mod.rs          BOUNCE entry point + remembered-path config
+│   ├── render.rs       offline one-shot render mirroring the live chain
+│   └── writer.rs       16-bit WAV (hound) + AIFF writers
 │
 ├── ui/
 │   ├── editor.rs       top-level egui shell
@@ -345,5 +371,4 @@ paths). See `Cargo.toml` for the full list.
 
 ## License
 
-GPL-3.0-or-later. See `Cargo.toml` for the SPDX identifier; a full
-`LICENSE` file will land with the first tagged release.
+GPL-3.0-or-later. See [`LICENSE`](LICENSE) for the full text.
