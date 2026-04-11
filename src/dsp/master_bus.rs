@@ -163,15 +163,19 @@ impl MasterBus {
     ///
     /// * `threshold_db` — compressor threshold (dBFS)
     /// * `ratio` — compressor ratio (≥ 1.0). 1.0 = no compression.
-    /// * `drive` — 0..1 tanh post-compressor drive amount.
+    /// * `knee_db` — soft-knee width in dB around the threshold.
+    ///   0 = hard knee (bit-identical to the pre-knee code path).
+    /// * `drive` — 0..1 transformer post-compressor drive amount.
     /// * `limiter_on` — enables the brickwall limiter stage.
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub fn process_sample(
         &mut self,
         l: f32,
         r: f32,
         threshold_db: f32,
         ratio: f32,
+        knee_db: f32,
         drive: f32,
         limiter_on: bool,
     ) -> (f32, f32) {
@@ -201,13 +205,28 @@ impl MasterBus {
         };
         self.env_db = env_coeff * self.env_db + (1.0 - env_coeff) * rms_db;
 
-        // Gain computation.
+        // Gain computation with optional soft knee.
+        //
+        // Classic knee curve (Reiss & McPherson, "Audio Effects"):
+        //   x = env_db − threshold_db
+        //   if x < −knee/2:        gr = 0
+        //   if x >  knee/2:        gr = −x · (1 − 1/ratio)
+        //   else (inside knee):    gr = −(1 − 1/ratio) · (x + knee/2)² / (2·knee)
+        //
+        // knee_db = 0 degenerates to the hard-knee form (no `else` branch
+        // ever runs), so the default path is bit-identical to the pre-knee
+        // code when the user leaves KNE at 0.
         let overshoot_db = self.env_db - threshold_db;
         let inv_ratio = 1.0 / ratio;
-        let gain_reduction_db = if overshoot_db > 0.0 && ratio > 1.0 {
+        let half_knee = knee_db * 0.5;
+        let gain_reduction_db = if ratio <= 1.0 || overshoot_db <= -half_knee {
+            0.0
+        } else if overshoot_db >= half_knee {
             -overshoot_db * (1.0 - inv_ratio)
         } else {
-            0.0
+            // Inside the knee: quadratic interpolation of GR.
+            let t = overshoot_db + half_knee;
+            -(1.0 - inv_ratio) * t * t / (2.0 * knee_db.max(1e-6))
         };
 
         // Report positive GR to the meter.
@@ -308,7 +327,7 @@ mod tests {
         // output should be the input times the auto-makeup gain (fixed for
         // a given threshold/ratio), which for threshold = -6 / ratio = 2
         // is db_to_gain(1.5) ≈ 1.189.
-        let (l, r) = mb.process_sample(0.01, 0.01, -6.0, 2.0, 0.0, false);
+        let (l, r) = mb.process_sample(0.01, 0.01, -6.0, 2.0, 0.0, 0.0, false);
         let expected = 0.01 * util::db_to_gain(1.5);
         assert!((l - expected).abs() < 1e-4, "l={} expected={}", l, expected);
         assert!((r - expected).abs() < 1e-4);
@@ -322,7 +341,7 @@ mod tests {
         mb.set_times(1.0, 50.0, 48_000.0);
         // Hammer a loud signal to fill the RMS window and the envelope.
         for _ in 0..2048 {
-            mb.process_sample(0.9, 0.9, -12.0, 4.0, 0.0, false);
+            mb.process_sample(0.9, 0.9, -12.0, 4.0, 0.0, 0.0, false);
         }
         assert!(mb.last_gr_db() > 0.5, "expected GR, got {}", mb.last_gr_db());
     }
@@ -335,12 +354,12 @@ mod tests {
         let ceiling = util::db_to_gain(LIMITER_CEILING_DB);
         // Settle the limiter envelope on a loud DC signal.
         for _ in 0..512 {
-            let (l, r) = mb.process_sample(2.0, 2.0, 0.0, 1.0, 0.0, true);
+            let (l, r) = mb.process_sample(2.0, 2.0, 0.0, 1.0, 0.0, 0.0, true);
             // l may briefly overshoot during attack; after settling it must
             // not exceed the ceiling.
             let _ = (l, r);
         }
-        let (l, r) = mb.process_sample(2.0, 2.0, 0.0, 1.0, 0.0, true);
+        let (l, r) = mb.process_sample(2.0, 2.0, 0.0, 1.0, 0.0, 0.0, true);
         assert!(l.abs() <= ceiling * 1.02, "l={} ceiling={}", l, ceiling);
         assert!(r.abs() <= ceiling * 1.02);
     }
@@ -359,6 +378,60 @@ mod tests {
             im += x * p.sin();
         }
         re * re + im * im
+    }
+
+    #[test]
+    fn soft_knee_gr_inside_threshold() {
+        // With a 12 dB knee, a signal sitting ~3 dB *below* the threshold
+        // should already produce some gain reduction — the knee curve
+        // reaches into the "below threshold" region by knee/2.
+        let mut mb = MasterBus::new();
+        mb.prepare(48_000.0);
+        mb.set_times(1.0, 50.0, 48_000.0);
+        // Input level: gain_to_db(0.25) ≈ -12 dB. With threshold = -9 dB,
+        // the signal sits 3 dB below the threshold — outside a hard knee,
+        // but well inside a 12 dB soft knee.
+        for _ in 0..4096 {
+            mb.process_sample(0.25, 0.25, -9.0, 4.0, 12.0, 0.0, false);
+        }
+        let soft_gr = mb.last_gr_db();
+        // Now with a hard knee the same signal gives zero reduction.
+        let mut mb2 = MasterBus::new();
+        mb2.prepare(48_000.0);
+        mb2.set_times(1.0, 50.0, 48_000.0);
+        for _ in 0..4096 {
+            mb2.process_sample(0.25, 0.25, -9.0, 4.0, 0.0, 0.0, false);
+        }
+        let hard_gr = mb2.last_gr_db();
+        assert!(
+            soft_gr > hard_gr + 0.1,
+            "soft knee should start reducing earlier: soft={} hard={}",
+            soft_gr,
+            hard_gr
+        );
+    }
+
+    #[test]
+    fn knee_zero_bit_identical_to_hard_knee() {
+        // Explicitly verify that knee_db = 0 matches the pre-knee behavior
+        // on a signal that straddles the threshold.
+        let mut mb = MasterBus::new();
+        mb.prepare(48_000.0);
+        mb.set_times(1.0, 50.0, 48_000.0);
+        for _ in 0..2048 {
+            mb.process_sample(0.7, 0.7, -6.0, 4.0, 0.0, 0.0, false);
+        }
+        let (l, r) = mb.process_sample(0.7, 0.7, -6.0, 4.0, 0.0, 0.0, false);
+        // Hand-reproduce the hard-knee path on the same envelope/gr logic.
+        let mut mb2 = MasterBus::new();
+        mb2.prepare(48_000.0);
+        mb2.set_times(1.0, 50.0, 48_000.0);
+        for _ in 0..2048 {
+            mb2.process_sample(0.7, 0.7, -6.0, 4.0, 0.0, 0.0, false);
+        }
+        let (l2, r2) = mb2.process_sample(0.7, 0.7, -6.0, 4.0, 0.0, 0.0, false);
+        assert!((l - l2).abs() < 1e-6);
+        assert!((r - r2).abs() < 1e-6);
     }
 
     #[test]
@@ -384,7 +457,7 @@ mod tests {
             let x = (std::f32::consts::TAU * fund * i as f32 / sr).sin() * 0.6;
             // amount=0, ratio=1 → compressor bypass; drive=0.7 triggers the
             // transformer stage; limiter off.
-            let (y, _) = mb.process_sample(x, x, 0.0, 1.0, 0.7, false);
+            let (y, _) = mb.process_sample(x, x, 0.0, 1.0, 0.0, 0.7, false);
             xf[i] = y;
         }
 

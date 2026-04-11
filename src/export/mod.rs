@@ -227,6 +227,9 @@ pub fn export_one_shot(state: &mut ExportState, params: &SlammerParams) -> Expor
         comp_react: params.comp_react.value(),
         comp_drive: params.comp_drive.value(),
         comp_limit_on: params.comp_limit_on.value(),
+        comp_atk_ms: params.comp_atk_ms.value(),
+        comp_rel_ms: params.comp_rel_ms.value(),
+        comp_knee_db: params.comp_knee_db.value(),
         master_volume: params.master_volume.value(),
     };
 

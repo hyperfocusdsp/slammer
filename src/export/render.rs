@@ -65,9 +65,16 @@ const BLOCK: usize = 256;
 #[derive(Clone, Copy, Debug)]
 pub struct MasterChainSnapshot {
     pub comp_amount: f32,
+    /// Retained for ABI compat with older callers that still pass RCT;
+    /// the render ignores it and reads `comp_atk_ms` / `comp_rel_ms`
+    /// directly, matching the live plugin chain.
+    #[allow(dead_code)]
     pub comp_react: f32,
     pub comp_drive: f32,
     pub comp_limit_on: bool,
+    pub comp_atk_ms: f32,
+    pub comp_rel_ms: f32,
+    pub comp_knee_db: f32,
     /// Linear gain, **not** dB — read straight from the smoothed param.
     pub master_volume: f32,
 }
@@ -94,19 +101,17 @@ pub fn render_oneshot(
     // A fresh engine has no active voices. Kick it off.
     engine.trigger(&kick_params, 1.0);
 
-    // Pre-compute the comp macro → DSP mapping. These four values come
-    // straight from `plugin.rs:348..=353` — must stay byte-identical.
+    // Pre-compute the comp macro → DSP mapping. These values come
+    // straight from the plugin.rs per-sample loop — must stay byte-identical.
     let amount = master_chain.comp_amount;
-    let react = master_chain.comp_react;
     let drive = master_chain.comp_drive;
     let limiter_on = master_chain.comp_limit_on;
     let master_gain = master_chain.master_volume;
+    let knee_db = master_chain.comp_knee_db;
 
     let threshold_db = -6.0 + amount * -24.0;
     let ratio = 2.0 + amount * 8.0;
-    let attack_ms = 30.0 + react * (1.5 - 30.0);
-    let release_ms = 400.0 + react * (40.0 - 400.0);
-    master_bus.set_times(attack_ms, release_ms, EXPORT_SR);
+    master_bus.set_times(master_chain.comp_atk_ms, master_chain.comp_rel_ms, EXPORT_SR);
 
     // Comp bypass condition matches `plugin.rs:358`.
     let comp_active = amount > 0.0001 || drive > 0.001 || limiter_on;
@@ -137,7 +142,15 @@ pub fn render_oneshot(
         let mut block_peak = 0.0f32;
         for (l, r) in block_l.iter_mut().zip(block_r.iter_mut()) {
             let (cl, cr) = if comp_active {
-                master_bus.process_sample(*l, *r, threshold_db, ratio, drive, limiter_on)
+                master_bus.process_sample(
+                    *l,
+                    *r,
+                    threshold_db,
+                    ratio,
+                    knee_db,
+                    drive,
+                    limiter_on,
+                )
             } else {
                 (*l, *r)
             };
@@ -213,6 +226,9 @@ mod tests {
             comp_react: 0.35,
             comp_drive: 0.0,
             comp_limit_on: false,
+            comp_atk_ms: 20.0,
+            comp_rel_ms: 274.0,
+            comp_knee_db: 6.0,
             master_volume: 1.0,
         }
     }
@@ -293,6 +309,9 @@ mod tests {
                 comp_react: 0.6,
                 comp_drive: 0.5,
                 comp_limit_on: true,
+                comp_atk_ms: 1.5,
+                comp_rel_ms: 40.0,
+                comp_knee_db: 6.0,
                 master_volume: 1.0,
             },
         );

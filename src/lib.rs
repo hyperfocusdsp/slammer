@@ -14,6 +14,7 @@ mod presets;
 mod sequencer;
 
 mod dsp {
+    pub mod clap;
     pub mod click;
     pub mod drift;
     pub mod engine;

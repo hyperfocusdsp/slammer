@@ -447,7 +447,13 @@ impl<'a> MasterRow<'a> {
                             small_knob,
                             theme::KNOB_METAL,
                         );
-                        param_knob(
+                        // RCT is a "link" macro: dragging it writes the
+                        // legacy inverse-coupled atk/rel formula directly
+                        // into comp_atk_ms / comp_rel_ms via the setter,
+                        // so the precision knobs follow along. Dragging
+                        // ATK or REL individually leaves RCT stale —
+                        // that's the intended break-out behavior.
+                        let rct_changed = param_knob(
                             ui,
                             setter,
                             "comp_rct",
@@ -460,6 +466,17 @@ impl<'a> MasterRow<'a> {
                             small_knob,
                             theme::KNOB_METAL,
                         );
+                        if rct_changed {
+                            let react = params.comp_react.value();
+                            let atk_ms = 30.0 + react * (1.5 - 30.0);
+                            let rel_ms = 400.0 + react * (40.0 - 400.0);
+                            setter.begin_set_parameter(&params.comp_atk_ms);
+                            setter.set_parameter(&params.comp_atk_ms, atk_ms);
+                            setter.end_set_parameter(&params.comp_atk_ms);
+                            setter.begin_set_parameter(&params.comp_rel_ms);
+                            setter.set_parameter(&params.comp_rel_ms, rel_ms);
+                            setter.end_set_parameter(&params.comp_rel_ms);
+                        }
                         param_knob(
                             ui,
                             setter,
@@ -682,6 +699,85 @@ pub fn draw_sub_top_row(
         });
     });
 
+    // ── Precise compressor row (ATK / REL / KNE) ──
+    // Parked in the empty grey gap to the right of the TOP knobs, aligned
+    // x with the MASTER-row COMP strip so it reads as a vertical column:
+    //     COMP (macros)   ← master row
+    //     PRECISE         ← here
+    //     CLAP            ← MID row
+    {
+        let small_knob = 18.0f32;
+        // Match the COMP strip's x so the three clusters stack visually.
+        let col_x = panel_rect.right() - CONTENT_LEFT - 96.0 + 4.0;
+        let col_label_y = row_label_y;
+        let col_row_y = row_knob_y - 2.0;
+
+        ui.painter().text(
+            egui::pos2(col_x, col_label_y),
+            egui::Align2::LEFT_TOP,
+            "PRECISE",
+            egui::FontId::new(9.0, egui::FontFamily::Monospace),
+            theme::TEXT_DIM,
+        );
+
+        let knob_cell_w = small_knob + 10.0;
+        let row_w = knob_cell_w * 3.0 + 6.0;
+        let knob_rect = egui::Rect::from_min_size(
+            egui::pos2(col_x, col_row_y),
+            egui::vec2(row_w, small_knob + 22.0),
+        );
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(knob_rect), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.horizontal(|ui| {
+                param_knob(
+                    ui,
+                    setter,
+                    "comp_atk",
+                    "ATK",
+                    &params.comp_atk_ms,
+                    0.3,
+                    50.0,
+                    20.0,
+                    |v| {
+                        if v < 10.0 {
+                            format!("{v:.1}ms")
+                        } else {
+                            format!("{v:.0}ms")
+                        }
+                    },
+                    small_knob,
+                    theme::KNOB_METAL,
+                );
+                param_knob(
+                    ui,
+                    setter,
+                    "comp_rel",
+                    "REL",
+                    &params.comp_rel_ms,
+                    20.0,
+                    800.0,
+                    274.0,
+                    |v| format!("{v:.0}ms"),
+                    small_knob,
+                    theme::KNOB_METAL,
+                );
+                param_knob(
+                    ui,
+                    setter,
+                    "comp_kne",
+                    "KNE",
+                    &params.comp_knee_db,
+                    0.0,
+                    12.0,
+                    6.0,
+                    |v| format!("{v:.1}dB"),
+                    small_knob,
+                    theme::KNOB_METAL,
+                );
+            });
+        });
+    }
+
     row_knob_y + KNOB_SIZE + 34.0
 }
 
@@ -839,6 +935,101 @@ pub fn draw_mid_row(
             );
         });
     });
+
+    // 909-style CLAP layer — sits at the bottom of the right-hand comp
+    // column (COMP → PRECISE → CLAP), aligned x with the master-row COMP
+    // strip so all three clusters stack visually.
+    {
+        let small_knob = 18.0f32;
+        let clap_cx = panel_rect.right() - CONTENT_LEFT - 96.0 + 4.0;
+        let clap_cy = row_knob_y + KNOB_SIZE * 0.5 - 2.0;
+
+        let clap_on = params.clap_on.value();
+        draw_led(ui.painter(), clap_cx, clap_cy, clap_on);
+        ui.painter().text(
+            egui::pos2(clap_cx + 8.0, clap_cy),
+            egui::Align2::LEFT_CENTER,
+            "CLAP",
+            egui::FontId::new(9.0, egui::FontFamily::Monospace),
+            if clap_on { theme::WHITE } else { theme::TEXT_DIM },
+        );
+        let clap_rect = egui::Rect::from_center_size(
+            egui::pos2(clap_cx + 14.0, clap_cy),
+            egui::vec2(46.0, 14.0),
+        );
+        let clap_resp = ui.interact(
+            clap_rect,
+            egui::Id::new("clap_toggle"),
+            egui::Sense::click(),
+        );
+        if clap_resp.clicked() {
+            setter.begin_set_parameter(&params.clap_on);
+            setter.set_parameter(&params.clap_on, !clap_on);
+            setter.end_set_parameter(&params.clap_on);
+        }
+        if clap_resp.hovered() {
+            clap_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+        }
+
+        let knob_cell_w = small_knob + 10.0;
+        let row_w = knob_cell_w * 3.0 + 6.0;
+        let row_x = clap_cx - 4.0;
+        let row_y = clap_cy + 10.0;
+        let knob_rect = egui::Rect::from_min_size(
+            egui::pos2(row_x, row_y),
+            egui::vec2(row_w, small_knob + 22.0),
+        );
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(knob_rect), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.horizontal(|ui| {
+                param_knob(
+                    ui,
+                    setter,
+                    "clap_lvl",
+                    "LVL",
+                    &params.clap_level,
+                    0.0,
+                    1.5,
+                    0.9,
+                    |v| format!("{:.2}", v),
+                    small_knob,
+                    theme::KNOB_METAL,
+                );
+                param_knob(
+                    ui,
+                    setter,
+                    "clap_freq",
+                    "FREQ",
+                    &params.clap_freq,
+                    500.0,
+                    5000.0,
+                    1200.0,
+                    |v| {
+                        if v >= 1000.0 {
+                            format!("{:.1}k", v / 1000.0)
+                        } else {
+                            format!("{:.0}", v)
+                        }
+                    },
+                    small_knob,
+                    theme::KNOB_METAL,
+                );
+                param_knob(
+                    ui,
+                    setter,
+                    "clap_tail",
+                    "TAIL",
+                    &params.clap_tail_ms,
+                    50.0,
+                    400.0,
+                    180.0,
+                    |v| format!("{:.0}ms", v),
+                    small_knob,
+                    theme::KNOB_METAL,
+                );
+            });
+        });
+    }
 
     row_knob_y + KNOB_SIZE + 34.0
 }
@@ -1302,8 +1493,8 @@ fn draw_tempo_widget(
 /// click-drag paint mode across frames.
 pub fn draw_sequencer_row(
     ui: &mut egui::Ui,
-    setter: &ParamSetter,
-    params: &SlammerParams,
+    _setter: &ParamSetter,
+    _params: &SlammerParams,
     panel_rect: egui::Rect,
     sat_eq_bottom_y: f32,
     seq: &crate::sequencer::Sequencer,
@@ -1511,80 +1702,6 @@ pub fn draw_sequencer_row(
         if resp.hovered() {
             resp.on_hover_cursor(egui::CursorIcon::PointingHand);
         }
-    }
-
-    // FLAM button + SPRD + HUM tucked into the right-hand gap.
-    {
-        let pads_right = pads_start_x + pitch * 16.0;
-        let small_knob = 18.0f32;
-
-        // FLAM toggle: small LED + click-target rect, same pattern as LIM.
-        let flam_cx = pads_right + 18.0;
-        let flam_cy = pad_top + pad_h * 0.5;
-        let flam_on = params.flam_on.value();
-        draw_led(ui.painter(), flam_cx, flam_cy, flam_on);
-        ui.painter().text(
-            egui::pos2(flam_cx + 8.0, flam_cy),
-            egui::Align2::LEFT_CENTER,
-            "FLAM",
-            egui::FontId::new(8.0, egui::FontFamily::Monospace),
-            if flam_on { theme::WHITE } else { theme::TEXT_DIM },
-        );
-        let flam_rect = egui::Rect::from_center_size(
-            egui::pos2(flam_cx + 12.0, flam_cy),
-            egui::vec2(40.0, 14.0),
-        );
-        let flam_resp = ui.interact(
-            flam_rect,
-            egui::Id::new("flam_toggle"),
-            egui::Sense::click(),
-        );
-        if flam_resp.clicked() {
-            setter.begin_set_parameter(&params.flam_on);
-            setter.set_parameter(&params.flam_on, !flam_on);
-            setter.end_set_parameter(&params.flam_on);
-        }
-
-        // SPRD + HUM knobs to the right of the FLAM button.
-        let knob_cell_w = small_knob + 10.0;
-        let row_w = knob_cell_w * 2.0 + 2.0;
-        let row_x = flam_cx + 46.0;
-        let row_y = pad_top - 6.0;
-        let knob_rect = egui::Rect::from_min_size(
-            egui::pos2(row_x, row_y),
-            egui::vec2(row_w, small_knob + 20.0),
-        );
-        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(knob_rect), |ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            ui.horizontal(|ui| {
-                param_knob(
-                    ui,
-                    setter,
-                    "flam_sprd",
-                    "SPRD",
-                    &params.flam_spread_ms,
-                    2.0,
-                    30.0,
-                    15.0,
-                    |v| format!("{:.0}ms", v),
-                    small_knob,
-                    theme::KNOB_METAL,
-                );
-                param_knob(
-                    ui,
-                    setter,
-                    "flam_hum",
-                    "HUM",
-                    &params.flam_humanize,
-                    0.0,
-                    1.0,
-                    0.3,
-                    |v| format!("{:.0}%", v * 100.0),
-                    small_knob,
-                    theme::KNOB_METAL,
-                );
-            });
-        });
     }
 
     // Fast-drag fill: if a paint drag is in progress and the pointer has

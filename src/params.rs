@@ -218,15 +218,31 @@ pub struct SlammerParams {
     #[id = "comp_limit"]
     pub comp_limit_on: BoolParam,
 
-    // --- Flam (global click/noise ghost hit) ---
-    #[id = "flam_on"]
-    pub flam_on: BoolParam,
+    /// Precise compressor attack in ms. The RCT macro writes this (and
+    /// `comp_rel_ms`) when dragged; the DSP reads this field directly, so
+    /// once the user touches ATK/REL individually they diverge from RCT.
+    #[id = "comp_atk"]
+    pub comp_atk_ms: FloatParam,
 
-    #[id = "flam_spread"]
-    pub flam_spread_ms: FloatParam,
+    #[id = "comp_rel"]
+    pub comp_rel_ms: FloatParam,
 
-    #[id = "flam_human"]
-    pub flam_humanize: FloatParam,
+    /// Soft-knee width in dB. 0 = hard knee.
+    #[id = "comp_knee"]
+    pub comp_knee_db: FloatParam,
+
+    // --- Clap (909-style parallel layer) ---
+    #[id = "clap_on"]
+    pub clap_on: BoolParam,
+
+    #[id = "clap_level"]
+    pub clap_level: FloatParam,
+
+    #[id = "clap_freq"]
+    pub clap_freq: FloatParam,
+
+    #[id = "clap_tail"]
+    pub clap_tail_ms: FloatParam,
 }
 
 /// Snapshot the currently-smoothed engine parameters into a flat `KickParams`
@@ -278,6 +294,11 @@ pub fn collect_kick_params(p: &SlammerParams) -> KickParams {
         eq_notch_freq: p.eq_notch_freq.value(),
         eq_notch_q: p.eq_notch_q.value(),
         eq_notch_depth_db: p.eq_notch_depth_db.value(),
+
+        clap_on: p.clap_on.value(),
+        clap_level: p.clap_level.value(),
+        clap_freq: p.clap_freq.value(),
+        clap_tail_ms: p.clap_tail_ms.value(),
     }
 }
 
@@ -473,22 +494,84 @@ impl Default for SlammerParams {
                 .with_smoother(SmoothingStyle::Linear(10.0)),
             comp_limit_on: BoolParam::new("Comp Limiter", false),
 
-            // --- Flam ---
-            flam_on: BoolParam::new("Flam", false),
-
-            flam_spread_ms: FloatParam::new(
-                "Flam Spread",
-                15.0,
+            // Precise comp knobs. Defaults match RCT=0.35 under the old
+            // inverse-coupled formula (atk = 30 + 0.35·(1.5 − 30) ≈ 20.0,
+            // rel = 400 + 0.35·(40 − 400) ≈ 274.0) so existing sessions and
+            // presets sound the same after this refactor.
+            comp_atk_ms: FloatParam::new(
+                "Comp Attack",
+                20.0,
                 FloatRange::Skewed {
-                    min: 2.0,
-                    max: 30.0,
+                    min: 0.3,
+                    max: 50.0,
+                    factor: FloatRange::skew_factor(-1.5),
+                },
+            )
+            .with_unit(" ms")
+            .with_smoother(SmoothingStyle::Linear(10.0))
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            comp_rel_ms: FloatParam::new(
+                "Comp Release",
+                274.0,
+                FloatRange::Skewed {
+                    min: 20.0,
+                    max: 800.0,
                     factor: FloatRange::skew_factor(-1.0),
                 },
             )
             .with_unit(" ms")
+            .with_smoother(SmoothingStyle::Linear(10.0))
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
+
+            comp_knee_db: FloatParam::new(
+                "Comp Knee",
+                6.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 12.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_smoother(SmoothingStyle::Linear(10.0))
             .with_value_to_string(formatters::v2s_f32_rounded(1)),
 
-            flam_humanize: pct_knob("Flam Humanize", 0.3),
+            // --- Clap ---
+            clap_on: BoolParam::new("Clap", false),
+
+            clap_level: FloatParam::new(
+                "Clap Level",
+                0.9,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 1.5,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(10.0))
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            clap_freq: FloatParam::new(
+                "Clap Freq",
+                1200.0,
+                FloatRange::Skewed {
+                    min: 500.0,
+                    max: 5000.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_unit(" Hz")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
+
+            clap_tail_ms: FloatParam::new(
+                "Clap Tail",
+                180.0,
+                FloatRange::Linear {
+                    min: 50.0,
+                    max: 400.0,
+                },
+            )
+            .with_unit(" ms")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
         }
     }
 }
@@ -548,10 +631,14 @@ pub struct ParamSnapshot {
     pub comp_react: f32,
     pub comp_drive: f32,
     pub comp_limit_on: bool,
+    pub comp_atk_ms: f32,
+    pub comp_rel_ms: f32,
+    pub comp_knee_db: f32,
 
-    pub flam_on: bool,
-    pub flam_spread_ms: f32,
-    pub flam_humanize: f32,
+    pub clap_on: bool,
+    pub clap_level: f32,
+    pub clap_freq: f32,
+    pub clap_tail_ms: f32,
 }
 
 impl ParamSnapshot {
@@ -600,10 +687,14 @@ impl ParamSnapshot {
             comp_react: p.comp_react.value(),
             comp_drive: p.comp_drive.value(),
             comp_limit_on: p.comp_limit_on.value(),
+            comp_atk_ms: p.comp_atk_ms.value(),
+            comp_rel_ms: p.comp_rel_ms.value(),
+            comp_knee_db: p.comp_knee_db.value(),
 
-            flam_on: p.flam_on.value(),
-            flam_spread_ms: p.flam_spread_ms.value(),
-            flam_humanize: p.flam_humanize.value(),
+            clap_on: p.clap_on.value(),
+            clap_level: p.clap_level.value(),
+            clap_freq: p.clap_freq.value(),
+            clap_tail_ms: p.clap_tail_ms.value(),
         }
     }
 
@@ -661,44 +752,62 @@ impl ParamSnapshot {
         setter.begin_set_parameter(&p.comp_limit_on);
         setter.set_parameter(&p.comp_limit_on, self.comp_limit_on);
         setter.end_set_parameter(&p.comp_limit_on);
+        set!(p.comp_atk_ms, self.comp_atk_ms);
+        set!(p.comp_rel_ms, self.comp_rel_ms);
+        set!(p.comp_knee_db, self.comp_knee_db);
 
-        setter.begin_set_parameter(&p.flam_on);
-        setter.set_parameter(&p.flam_on, self.flam_on);
-        setter.end_set_parameter(&p.flam_on);
-        set!(p.flam_spread_ms, self.flam_spread_ms);
-        set!(p.flam_humanize, self.flam_humanize);
+        setter.begin_set_parameter(&p.clap_on);
+        setter.set_parameter(&p.clap_on, self.clap_on);
+        setter.end_set_parameter(&p.clap_on);
+        set!(p.clap_level, self.clap_level);
+        set!(p.clap_freq, self.clap_freq);
+        set!(p.clap_tail_ms, self.clap_tail_ms);
     }
 }
 
 #[cfg(test)]
-mod flam_param_tests {
+mod clap_param_tests {
     use super::*;
 
     #[test]
-    fn flam_params_defaults() {
+    fn clap_params_defaults() {
         let p = SlammerParams::default();
-        assert!(!p.flam_on.value());
-        assert!((p.flam_spread_ms.value() - 15.0).abs() < 1e-4);
-        assert!((p.flam_humanize.value() - 0.3).abs() < 1e-4);
+        assert!(!p.clap_on.value());
+        assert!((p.clap_level.value() - 0.9).abs() < 1e-4);
+        assert!((p.clap_freq.value() - 1200.0).abs() < 1.0);
+        assert!((p.clap_tail_ms.value() - 180.0).abs() < 1e-4);
     }
 
     #[test]
-    fn param_snapshot_roundtrip_flam() {
-        let mut snap = ParamSnapshot::default();
-        snap.flam_on = true;
-        snap.flam_spread_ms = 22.5;
-        snap.flam_humanize = 0.75;
+    fn param_snapshot_roundtrip_clap() {
+        let snap = ParamSnapshot {
+            clap_on: true,
+            clap_level: 1.1,
+            clap_freq: 1800.0,
+            clap_tail_ms: 250.0,
+            ..ParamSnapshot::default()
+        };
         let json = serde_json::to_string(&snap).unwrap();
         let back: ParamSnapshot = serde_json::from_str(&json).unwrap();
         assert_eq!(back, snap);
     }
 
     #[test]
-    fn old_preset_loads_with_flam_defaults() {
+    fn old_preset_loads_with_clap_defaults() {
         let json = r#"{ "decay_ms": 120.0 }"#;
         let snap: ParamSnapshot = serde_json::from_str(json).unwrap();
-        assert!(!snap.flam_on);
-        assert_eq!(snap.flam_spread_ms, 0.0);
-        assert_eq!(snap.flam_humanize, 0.0);
+        assert!(!snap.clap_on);
+        assert_eq!(snap.clap_level, 0.0);
+        assert_eq!(snap.clap_freq, 0.0);
+        assert_eq!(snap.clap_tail_ms, 0.0);
+    }
+
+    #[test]
+    fn old_preset_with_flam_fields_loads_cleanly() {
+        // Unknown serde fields are ignored by default. A preset saved by
+        // the previous flam-era build should still load without error.
+        let json = r#"{ "decay_ms": 120.0, "flam_on": true, "flam_spread_ms": 15.0, "flam_humanize": 0.3 }"#;
+        let snap: ParamSnapshot = serde_json::from_str(json).unwrap();
+        assert!(!snap.clap_on);
     }
 }

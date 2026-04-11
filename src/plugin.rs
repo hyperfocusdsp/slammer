@@ -217,13 +217,6 @@ impl Plugin for Slammer {
                             .store(new_step, Ordering::Relaxed);
                         if self.sequencer.steps[new_step].load(Ordering::Relaxed) {
                             self.engine.trigger(&collect_kick_params(&self.params), 1.0);
-                            if self.params.flam_on.value() {
-                                let gap_samples = ((self.params.flam_spread_ms.value() * 0.001)
-                                    * self.sample_rate)
-                                    .round() as u32;
-                                let humanize = self.params.flam_humanize.value();
-                                self.engine.schedule_ghost(gap_samples, humanize);
-                            }
                         }
                     }
                 }
@@ -253,13 +246,6 @@ impl Plugin for Slammer {
                 self.sequencer.current_step.store(0, Ordering::Relaxed);
                 if self.sequencer.steps[0].load(Ordering::Relaxed) {
                     self.engine.trigger(&collect_kick_params(&self.params), 1.0);
-                    if self.params.flam_on.value() {
-                        let gap_samples = ((self.params.flam_spread_ms.value() * 0.001)
-                            * self.sample_rate)
-                            .round() as u32;
-                        let humanize = self.params.flam_humanize.value();
-                        self.engine.schedule_ghost(gap_samples, humanize);
-                    }
                 }
             }
             self.seq_running_prev = running;
@@ -275,13 +261,6 @@ impl Plugin for Slammer {
                         .store(self.seq_current_step, Ordering::Relaxed);
                     if self.sequencer.steps[self.seq_current_step].load(Ordering::Relaxed) {
                         self.engine.trigger(&collect_kick_params(&self.params), 1.0);
-                        if self.params.flam_on.value() {
-                            let gap_samples = ((self.params.flam_spread_ms.value() * 0.001)
-                                * self.sample_rate)
-                                .round() as u32;
-                            let humanize = self.params.flam_humanize.value();
-                            self.engine.schedule_ghost(gap_samples, humanize);
-                        }
                     }
                 }
             } else {
@@ -314,17 +293,23 @@ impl Plugin for Slammer {
             for (l, r) in output_left.iter_mut().zip(output_right.iter_mut()) {
                 // Smoothed pulls — cheap scalar arithmetic.
                 let amount = self.params.comp_amount.smoothed.next();
-                let react = self.params.comp_react.smoothed.next();
+                // comp_react's smoothed value is pulled to keep its
+                // smoother in lockstep with host automation, but the DSP
+                // no longer reads it directly — RCT is now a UI-side
+                // "link" that writes into comp_atk_ms / comp_rel_ms.
+                let _ = self.params.comp_react.smoothed.next();
                 let drive = self.params.comp_drive.smoothed.next();
+                let atk_ms = self.params.comp_atk_ms.smoothed.next();
+                let rel_ms = self.params.comp_rel_ms.smoothed.next();
+                let knee_db = self.params.comp_knee_db.smoothed.next();
                 let master_gain = self.params.master_volume.smoothed.next();
 
-                // Macro → DSP mapping (see planning doc §"Macro mappings").
+                // Macro → DSP mapping for AMT (threshold + ratio stay
+                // coupled; ATK/REL/KNE are read directly from params).
                 let threshold_db = -6.0 + amount * -24.0; // -6 .. -30
                 let ratio = 2.0 + amount * 8.0; // 2:1 .. 10:1
-                let attack_ms = 30.0 + react * (1.5 - 30.0); // 30 .. 1.5
-                let release_ms = 400.0 + react * (40.0 - 400.0); // 400 .. 40
 
-                self.master_bus.set_times(attack_ms, release_ms, sr);
+                self.master_bus.set_times(atk_ms, rel_ms, sr);
 
                 // Bypass when fully clean to stay bit-identical to the
                 // pre-comp build on default settings.
@@ -334,6 +319,7 @@ impl Plugin for Slammer {
                         *r,
                         threshold_db,
                         ratio,
+                        knee_db,
                         drive,
                         limiter_on,
                     )
