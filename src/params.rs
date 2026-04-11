@@ -103,6 +103,12 @@ pub struct SlammerParams {
     #[persist = "seq_steps"]
     pub seq_steps: Arc<Mutex<u16>>,
 
+    /// Per-step flam state packed as 2 bits per step (32 bits used; stored
+    /// in a u64 for headroom). Deserialized by nih-plug at init time and
+    /// copied into `Sequencer::flam_state` by `Plugin::initialize`.
+    #[persist = "seq_flam"]
+    pub seq_flam: Arc<Mutex<u64>>,
+
     #[id = "master_vol"]
     pub master_volume: FloatParam,
 
@@ -286,6 +292,7 @@ impl Default for SlammerParams {
             editor_state: EguiState::from_size(680, 444), // matches BASE_W x BASE_H (1:1 default)
 
             seq_steps: Arc::new(Mutex::new(DEFAULT_STEP_BITS)),
+            seq_flam: Arc::new(Mutex::new(0)),
 
             master_volume: db_knob("Master Volume", 0.0, -60.0, 6.0),
 

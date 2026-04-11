@@ -60,7 +60,10 @@ impl Default for Slammer {
         let (telem_tx, telem_rx) = telemetry::channel();
         let (ui_tx, ui_rx) = messages::channel();
         let params = Arc::new(SlammerParams::default());
-        let sequencer = Arc::new(Sequencer::new(Arc::clone(&params.seq_steps)));
+        let sequencer = Arc::new(Sequencer::new(
+            Arc::clone(&params.seq_steps),
+            Arc::clone(&params.seq_flam),
+        ));
         Self {
             params,
             engine: KickEngine::new(44100.0),
