@@ -11,6 +11,7 @@ use nih_plug_egui::{create_egui_editor, EguiState};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
+use crate::export::{self, ExportOutcome};
 use crate::params::SlammerParams;
 use crate::presets::PresetManager;
 use crate::sequencer::Sequencer;
@@ -56,6 +57,10 @@ pub fn create(
     let preset_bar = Arc::new(Mutex::new(PresetBar::new(&preset_manager)));
     let ui_tx = Arc::new(Mutex::new(ui_tx));
     let seq_ui_state = Arc::new(Mutex::new(panels::SequencerUiState::default()));
+    // Remembered export dir + format, loaded lazily from disk on first build.
+    // The one-shot bounce button lives in the SAT/EQ row and fires through
+    // this state so the next export opens at the same directory.
+    let export_state = Arc::new(Mutex::new(export::load_export_state()));
     let editor_state_clone = Arc::clone(&editor_state);
     // Visually smoothed GR meter value — instant attack, slow release, held
     // across frames so the bar doesn't flicker between audio buffers.
@@ -97,7 +102,7 @@ pub fn create(
                     if !sequencer.is_host_synced() {
                         let mgr = preset_manager.lock();
                         if let Some(entry) = mgr.list_all().into_iter().find(|e| e.name == name) {
-                            entry.params.apply(setter, &params);
+                            entry.params.apply(setter, &params, &sequencer);
                             // Reflect the selection in the preset bar UI.
                             let mut bar = preset_bar.lock();
                             bar.select_by_name(&entry.name);
@@ -143,6 +148,7 @@ pub fn create(
                             ui,
                             setter,
                             &params,
+                            &sequencer,
                             &preset_manager,
                             preset_origin_x,
                             header_center_y,
@@ -204,8 +210,29 @@ pub fn create(
                         panels::draw_sub_top_row(ui, setter, &params, panel_rect, master_bottom_y);
                     let mid_bottom_y =
                         panels::draw_mid_row(ui, setter, &params, panel_rect, sub_top_bottom_y);
-                    let sat_eq_bottom_y =
+                    let sat_eq_result =
                         panels::draw_sat_eq_row(ui, setter, &params, panel_rect, mid_bottom_y);
+                    let sat_eq_bottom_y = sat_eq_result.next_y;
+
+                    // BOUNCE click → run the one-shot export flow. This pops
+                    // a native save dialog, renders a single hit at 44.1 kHz
+                    // 16-bit through the full chain, and writes WAV or AIFF.
+                    // All work happens on the GUI thread — audio is untouched.
+                    if sat_eq_result.bounce_clicked {
+                        let mut state = export_state.lock();
+                        match export::export_one_shot(&mut state, &params) {
+                            ExportOutcome::Written(path) => {
+                                tracing::info!("bounce written: {}", path.display());
+                            }
+                            ExportOutcome::Cancelled => {}
+                            ExportOutcome::UnsupportedExtension(ext) => {
+                                tracing::warn!("bounce: unsupported extension .{}", ext);
+                            }
+                            ExportOutcome::Failed(msg) => {
+                                tracing::error!("bounce failed: {}", msg);
+                            }
+                        }
+                    }
 
                     // ===== Step sequencer =====
                     {
