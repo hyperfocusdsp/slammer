@@ -2,6 +2,13 @@
 
 All notable changes to Slammer are documented here.
 
+## [0.4.1] — 2026-04-12
+
+### Fixes
+
+- DICE row moved below the STEP separator line with proper spacing (was touching it).
+- BOUNCE button repositioned to just above the footer groove, narrowed from 56 to 48 px.
+
 ## [0.4.0] — 2026-04-12
 
 ### New features

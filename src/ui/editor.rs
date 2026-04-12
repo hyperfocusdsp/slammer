@@ -269,9 +269,9 @@ pub fn create(
 
                     // ===== DICE + BOUNCE (sequencer right column) =====
                     {
-                        // Sequencer row starts at sat_eq_bottom_y + 4; align
-                        // dice with the sequencer label area.
-                        let dice_top = sat_eq_bottom_y + 6.0;
+                        // DICE sits just below the STEP groove (sat_eq_bottom_y + 18),
+                        // with enough gap to not touch the separator line.
+                        let dice_top = sat_eq_bottom_y + 23.0;
                         let dice_clicked = panels::draw_dice_row(
                             ui, panel_rect, dice_top, &dice_locks,
                         );
@@ -279,7 +279,8 @@ pub fn create(
                             let locked = dice_locks.load(std::sync::atomic::Ordering::Relaxed);
                             crate::ui::randomize::randomize(setter, &params, locked);
                         }
-                        let bounce_top = dice_top + 20.0;
+                        // BOUNCE sits just above the footer groove (bottom - 22).
+                        let bounce_top = panel_rect.bottom() - 42.0;
                         let bounce_clicked = panels::draw_bounce_button(
                             ui, panel_rect, bounce_top,
                         );

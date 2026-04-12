@@ -1203,7 +1203,7 @@ pub fn draw_sat_eq_row(
 /// match [`test_button`] so it reads as part of the same visual family.
 /// Returns `true` on the frame the user clicks it.
 pub fn draw_bounce_button(ui: &mut egui::Ui, panel_rect: egui::Rect, top_y: f32) -> bool {
-    let btn_w = 56.0;
+    let btn_w = 48.0;
     let btn_h = 18.0;
     let btn_x = panel_rect.right() - CONTENT_LEFT - btn_w;
     let btn_rect = egui::Rect::from_min_size(egui::pos2(btn_x, top_y), egui::vec2(btn_w, btn_h));
