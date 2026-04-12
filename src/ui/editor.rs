@@ -72,6 +72,10 @@ pub fn create(
     let pending_restore: Arc<Mutex<Option<String>>> =
         Arc::new(Mutex::new(crate::presets::load_last_preset_name()));
 
+    // Header logo texture, lazily uploaded on first paint.
+    let logo_texture: Arc<Mutex<Option<egui::TextureHandle>>> = Arc::new(Mutex::new(None));
+    let dice_locks = Arc::new(std::sync::atomic::AtomicU8::new(0));
+
     create_egui_editor(
         editor_state,
         (),
@@ -119,6 +123,48 @@ pub fn create(
                     // ===== Panel chrome =====
                     let header_center_y = panels::draw_chrome(ui, panel_rect);
 
+                    // Header logo (lazy texture upload, then painter::image).
+                    {
+                        let mut tex = logo_texture.lock();
+                        if tex.is_none() {
+                            let bytes = include_bytes!("../../assets/slammer_logo.png");
+                            if let Ok(img) = image::load_from_memory(bytes) {
+                                let rgba = img.to_rgba8();
+                                let (w, h) = rgba.dimensions();
+                                let pixels = rgba.into_raw();
+                                let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                    [w as usize, h as usize],
+                                    &pixels,
+                                );
+                                *tex = Some(ctx.load_texture(
+                                    "slammer_logo",
+                                    color_image,
+                                    egui::TextureOptions::LINEAR,
+                                ));
+                            }
+                        }
+                        if let Some(t) = tex.as_ref() {
+                            let logo_h = 18.0;
+                            let logo_w = logo_h * (480.0 / 84.0);
+                            let logo_rect = egui::Rect::from_min_size(
+                                egui::pos2(
+                                    panel_rect.left() + CONTENT_LEFT,
+                                    header_center_y - logo_h * 0.5,
+                                ),
+                                egui::vec2(logo_w, logo_h),
+                            );
+                            ui.painter().image(
+                                t.id(),
+                                logo_rect,
+                                egui::Rect::from_min_max(
+                                    egui::pos2(0.0, 0.0),
+                                    egui::pos2(1.0, 1.0),
+                                ),
+                                theme::WHITE,
+                            );
+                        }
+                    }
+
                     // ===== Test trigger (button + keyboard 'T') =====
                     let button_fired = panels::test_button(ui, panel_rect, header_center_y);
                     let key_fired = ui.input(|i| i.key_pressed(egui::Key::T));
@@ -127,7 +173,7 @@ pub fn create(
                             // Dropped triggers are intentional: the ring is
                             // small, and the user won't notice one missed
                             // test-kick. No panic, no log spam.
-                            let _ = tx.push(UiToDsp::Trigger { velocity: 1.0 });
+                            let _ = tx.push(UiToDsp::Trigger);
                         }
                     }
 
@@ -170,7 +216,7 @@ pub fn create(
                     // ===== Master row (OUTPUT + master knobs + comp strip) =====
                     let master_y = groove_y + 6.0;
                     let wf_left = panel_rect.left() + CONTENT_LEFT;
-                    let wf_width = 6.0 * KNOB_SPACING - 16.0;
+                    let wf_width = 7.0 * KNOB_SPACING - 16.0;
                     let wf_height = 56.0;
 
                     // Pull latest GR from the audio thread and apply a one-pole
@@ -213,22 +259,43 @@ pub fn create(
                         panels::draw_sat_eq_row(ui, setter, &params, panel_rect, mid_bottom_y);
                     let sat_eq_bottom_y = sat_eq_result.next_y;
 
-                    // BOUNCE click → run the one-shot export flow. This pops
-                    // a native save dialog, renders a single hit at 44.1 kHz
-                    // 16-bit through the full chain, and writes WAV or AIFF.
-                    // All work happens on the GUI thread — audio is untouched.
-                    if sat_eq_result.bounce_clicked {
-                        let mut state = export_state.lock();
-                        match export::export_one_shot(&mut state, &params) {
-                            ExportOutcome::Written(path) => {
-                                tracing::info!("bounce written: {}", path.display());
-                            }
-                            ExportOutcome::Cancelled => {}
-                            ExportOutcome::UnsupportedExtension(ext) => {
-                                tracing::warn!("bounce: unsupported extension .{}", ext);
-                            }
-                            ExportOutcome::Failed(msg) => {
-                                tracing::error!("bounce failed: {}", msg);
+                    // ===== Filter (SAT/EQ right column) =====
+                    {
+                        let filter_top = sat_eq_bottom_y - panels::KNOB_SIZE - 26.0;
+                        panels::draw_filter_cluster(
+                            ui, setter, &params, panel_rect, filter_top,
+                        );
+                    }
+
+                    // ===== DICE + BOUNCE (sequencer right column) =====
+                    {
+                        // Sequencer row starts at sat_eq_bottom_y + 4; align
+                        // dice with the sequencer label area.
+                        let dice_top = sat_eq_bottom_y + 6.0;
+                        let dice_clicked = panels::draw_dice_row(
+                            ui, panel_rect, dice_top, &dice_locks,
+                        );
+                        if dice_clicked {
+                            let locked = dice_locks.load(std::sync::atomic::Ordering::Relaxed);
+                            crate::ui::randomize::randomize(setter, &params, locked);
+                        }
+                        let bounce_top = dice_top + 20.0;
+                        let bounce_clicked = panels::draw_bounce_button(
+                            ui, panel_rect, bounce_top,
+                        );
+                        if bounce_clicked {
+                            let mut state = export_state.lock();
+                            match export::export_one_shot(&mut state, &params) {
+                                ExportOutcome::Written(path) => {
+                                    tracing::info!("bounce written: {}", path.display());
+                                }
+                                ExportOutcome::Cancelled => {}
+                                ExportOutcome::UnsupportedExtension(ext) => {
+                                    tracing::warn!("bounce: unsupported extension .{}", ext);
+                                }
+                                ExportOutcome::Failed(msg) => {
+                                    tracing::error!("bounce failed: {}", msg);
+                                }
                             }
                         }
                     }

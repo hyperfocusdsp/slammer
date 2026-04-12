@@ -16,6 +16,7 @@ mod sequencer;
 mod dsp {
     pub mod clap;
     pub mod click;
+    pub mod dj_filter;
     pub mod drift;
     pub mod engine;
     pub mod envelope;

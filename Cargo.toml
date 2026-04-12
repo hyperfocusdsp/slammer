@@ -3,7 +3,7 @@ members = ["xtask"]
 
 [package]
 name = "slammer"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Kick drum synthesizer plugin"
@@ -47,6 +47,12 @@ hound = "3"
 # save_file() blocks the GUI thread briefly, which is fine because the user
 # is actively waiting and audio runs on its own thread.
 rfd = "0.14"
+
+# PNG decoding for the header logo (one-time decode at editor startup).
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# RNG for the DICE randomize feature (GUI thread only).
+rand = "0.8"
 
 [profile.release]
 lto = "thin"

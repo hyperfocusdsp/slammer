@@ -20,6 +20,7 @@
 //! If you change one, change both. The `matches_live_chain_bit_identical`
 //! unit test in this file is the tripwire.
 
+use crate::dsp::dj_filter::DjFilter;
 use crate::dsp::engine::{KickEngine, KickParams};
 use crate::dsp::master_bus::MasterBus;
 use crate::dsp::tube::TubeWarmth;
@@ -75,6 +76,9 @@ pub struct MasterChainSnapshot {
     pub comp_atk_ms: f32,
     pub comp_rel_ms: f32,
     pub comp_knee_db: f32,
+    pub dj_filter_pos: f32,
+    pub dj_filter_res: f32,
+    pub dj_filter_pre: bool,
     /// Linear gain, **not** dB — read straight from the smoothed param.
     pub master_volume: f32,
 }
@@ -97,9 +101,11 @@ pub fn render_oneshot(
     let mut master_bus = MasterBus::new();
     master_bus.prepare(EXPORT_SR);
     let mut tube_warmth = TubeWarmth::new();
+    let mut dj_filter = DjFilter::new();
+    dj_filter.set_sample_rate(EXPORT_SR);
 
     // A fresh engine has no active voices. Kick it off.
-    engine.trigger(&kick_params, 1.0);
+    engine.trigger(&kick_params);
 
     // Pre-compute the comp macro → DSP mapping. These values come
     // straight from the plugin.rs per-sample loop — must stay byte-identical.
@@ -113,12 +119,14 @@ pub fn render_oneshot(
     let ratio = 2.0 + amount * 8.0;
     master_bus.set_times(master_chain.comp_atk_ms, master_chain.comp_rel_ms, EXPORT_SR);
 
-    // Comp bypass condition matches `plugin.rs:358`.
     let comp_active = amount > 0.0001 || drive > 0.001 || limiter_on;
 
-    // Warmth amount derived from master gain, matches `plugin.rs:376..=378`.
     const UNITY_TO_PLUS_6DB: f32 = 1.995_262_3 - 1.0;
     let warmth_amount = ((master_gain - 1.0) / UNITY_TO_PLUS_6DB).clamp(0.0, 1.0);
+
+    let filt_pos = master_chain.dj_filter_pos;
+    let filt_res = master_chain.dj_filter_res;
+    let filt_pre = master_chain.dj_filter_pre;
 
     // Output buffers. Pre-size to the expected tail to minimize reallocs.
     let mut out_l: Vec<f32> = Vec::with_capacity(TAIL_MAX_SAMPLES);
@@ -141,10 +149,15 @@ pub fn render_oneshot(
         // Per-sample post-engine chain — must mirror plugin.rs:341..=384.
         let mut block_peak = 0.0f32;
         for (l, r) in block_l.iter_mut().zip(block_r.iter_mut()) {
+            let (pre_l, pre_r) = if filt_pre {
+                dj_filter.process_sample(*l, *r, filt_pos, filt_res)
+            } else {
+                (*l, *r)
+            };
             let (cl, cr) = if comp_active {
                 master_bus.process_sample(
-                    *l,
-                    *r,
+                    pre_l,
+                    pre_r,
                     threshold_db,
                     ratio,
                     knee_db,
@@ -152,11 +165,16 @@ pub fn render_oneshot(
                     limiter_on,
                 )
             } else {
-                (*l, *r)
+                (pre_l, pre_r)
             };
             let (wl, wr) = tube_warmth.process_sample(cl, cr, warmth_amount);
-            let ol = wl * master_gain;
-            let or_ = wr * master_gain;
+            let (fl, fr) = if !filt_pre {
+                dj_filter.process_sample(wl, wr, filt_pos, filt_res)
+            } else {
+                (wl, wr)
+            };
+            let ol = fl * master_gain;
+            let or_ = fr * master_gain;
             *l = ol;
             *r = or_;
             let peak = ol.abs().max(or_.abs());
@@ -229,6 +247,9 @@ mod tests {
             comp_atk_ms: 20.0,
             comp_rel_ms: 274.0,
             comp_knee_db: 6.0,
+            dj_filter_pos: 0.0,
+            dj_filter_res: 0.0,
+            dj_filter_pre: false,
             master_volume: 1.0,
         }
     }
@@ -312,6 +333,9 @@ mod tests {
                 comp_atk_ms: 1.5,
                 comp_rel_ms: 40.0,
                 comp_knee_db: 6.0,
+                dj_filter_pos: 0.0,
+                dj_filter_res: 0.0,
+                dj_filter_pre: false,
                 master_volume: 1.0,
             },
         );

@@ -230,6 +230,9 @@ pub fn export_one_shot(state: &mut ExportState, params: &SlammerParams) -> Expor
         comp_atk_ms: params.comp_atk_ms.value(),
         comp_rel_ms: params.comp_rel_ms.value(),
         comp_knee_db: params.comp_knee_db.value(),
+        dj_filter_pos: params.dj_filter_pos.value(),
+        dj_filter_res: params.dj_filter_res.value(),
+        dj_filter_pre: params.dj_filter_pre.value(),
         master_volume: params.master_volume.value(),
     };
 

@@ -12,7 +12,7 @@ pub struct KnobResponse {
 #[allow(clippy::too_many_arguments)]
 pub fn knob(
     ui: &mut egui::Ui,
-    _id: egui::Id,
+    id: egui::Id,
     value: &mut f32,
     min: f32,
     max: f32,
@@ -35,9 +35,20 @@ pub fn knob(
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
         let response = response.on_hover_cursor(egui::CursorIcon::ResizeVertical);
 
-        // Ctrl+click or double-click to reset
+        // Ctrl+click or double-click to reset.
+        // Note: response.double_clicked() is unreliable under baseview (raw
+        // mouse events, no synthesised egui double-click). We track the last
+        // click time ourselves using per-widget temp storage keyed by `id`.
         let ctrl_click = response.clicked() && ui.input(|i| i.modifiers.ctrl);
-        if ctrl_click || response.double_clicked() {
+        let is_double = if response.clicked() {
+            let now: f64 = ui.input(|i| i.time);
+            let last: f64 = ui.ctx().data(|d| d.get_temp(id).unwrap_or(f64::NEG_INFINITY));
+            ui.ctx().data_mut(|d| d.insert_temp(id, now));
+            (now - last) < 0.35
+        } else {
+            false
+        };
+        if ctrl_click || is_double {
             *value = default;
             result.changed = true;
             result.reset = true;
@@ -145,7 +156,7 @@ pub fn knob(
         ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
             ui.label(
                 egui::RichText::new(label)
-                    .font(egui::FontId::new(10.5, egui::FontFamily::Monospace))
+                    .font(egui::FontId::new(9.5, egui::FontFamily::Monospace))
                     .color(theme::WHITE),
             );
         });

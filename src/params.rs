@@ -107,9 +107,6 @@ pub struct SlammerParams {
     #[id = "decay"]
     pub decay_ms: FloatParam,
 
-    #[id = "vel_sens"]
-    pub velocity_sens: FloatParam,
-
     // --- SUB layer ---
     #[id = "sub_gain"]
     pub sub_gain: FloatParam,
@@ -174,6 +171,9 @@ pub struct SlammerParams {
 
     #[id = "top_bw"]
     pub top_bw: FloatParam,
+
+    #[id = "top_metal"]
+    pub top_metal: FloatParam,
 
     // --- Drift ---
     #[id = "drift"]
@@ -243,6 +243,16 @@ pub struct SlammerParams {
 
     #[id = "clap_tail"]
     pub clap_tail_ms: FloatParam,
+
+    // --- DJ Filter (master bus) ---
+    #[id = "dj_filt_pos"]
+    pub dj_filter_pos: FloatParam,
+
+    #[id = "dj_filt_res"]
+    pub dj_filter_res: FloatParam,
+
+    #[id = "dj_filt_pre"]
+    pub dj_filter_pre: BoolParam,
 }
 
 /// Snapshot the currently-smoothed engine parameters into a flat `KickParams`
@@ -258,7 +268,6 @@ pub fn collect_kick_params(p: &SlammerParams) -> KickParams {
     KickParams {
         master_gain: 1.0,
         decay_ms: p.decay_ms.value(),
-        velocity_sens: p.velocity_sens.value(),
 
         sub_gain: p.sub_gain.value(),
         sub_fstart: p.sub_fstart.value(),
@@ -282,6 +291,7 @@ pub fn collect_kick_params(p: &SlammerParams) -> KickParams {
         top_decay_ms: p.top_decay_ms.value(),
         top_freq: p.top_freq.value(),
         top_bw: p.top_bw.value(),
+        top_metal: p.top_metal.value(),
 
         drift_amount: p.drift_amount.value(),
 
@@ -313,12 +323,6 @@ impl Default for SlammerParams {
 
             decay_ms: ms_knob("Decay", 400.0, 50.0, 3000.0, -1.5)
                 .with_smoother(SmoothingStyle::Linear(20.0)),
-
-            velocity_sens: FloatParam::new(
-                "Velocity Sens",
-                0.8,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
 
             // --- SUB ---
             sub_gain: FloatParam::new("Sub Gain", 0.85, FloatRange::Linear { min: 0.0, max: 1.0 })
@@ -419,6 +423,9 @@ impl Default for SlammerParams {
             top_bw: FloatParam::new("Top BW", 1.5, FloatRange::Linear { min: 0.2, max: 3.0 })
                 .with_unit(" oct")
                 .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            top_metal: pct_knob("Top Metal", 0.0)
+                .with_smoother(SmoothingStyle::Linear(10.0)),
 
             // --- Drift ---
             drift_amount: pct_knob("Drift", 0.0),
@@ -572,6 +579,37 @@ impl Default for SlammerParams {
             )
             .with_unit(" ms")
             .with_value_to_string(formatters::v2s_f32_rounded(0)),
+
+            // --- DJ Filter ---
+            dj_filter_pos: FloatParam::new(
+                "DJ Filter",
+                0.0,
+                FloatRange::Linear { min: -1.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(5.0))
+            .with_value_to_string(Arc::new(|v| {
+                if v.abs() < 0.001 {
+                    "OFF".into()
+                } else {
+                    let t = v.abs();
+                    let freq = if v > 0.0 {
+                        20.0 * (800.0f32 / 20.0).powf(t)
+                    } else {
+                        20000.0 * (200.0f32 / 20000.0).powf(t)
+                    };
+                    let prefix = if v > 0.0 { "HP" } else { "LP" };
+                    if freq >= 1000.0 {
+                        format!("{prefix} {:.1}kHz", freq / 1000.0)
+                    } else {
+                        format!("{prefix} {freq:.0}Hz")
+                    }
+                }
+            })),
+
+            dj_filter_res: pct_knob("DJ Filter Res", 0.0)
+                .with_smoother(SmoothingStyle::Linear(10.0)),
+
+            dj_filter_pre: BoolParam::new("DJ Filter Pre", false),
         }
     }
 }
@@ -590,7 +628,6 @@ impl Default for SlammerParams {
 #[serde(default)]
 pub struct ParamSnapshot {
     pub decay_ms: f32,
-    pub velocity_sens: f32,
 
     pub sub_gain: f32,
     pub sub_fstart: f32,
@@ -614,6 +651,7 @@ pub struct ParamSnapshot {
     pub top_decay_ms: f32,
     pub top_freq: f32,
     pub top_bw: f32,
+    pub top_metal: f32,
 
     pub drift_amount: f32,
 
@@ -639,6 +677,10 @@ pub struct ParamSnapshot {
     pub clap_level: f32,
     pub clap_freq: f32,
     pub clap_tail_ms: f32,
+
+    pub dj_filter_pos: f32,
+    pub dj_filter_res: f32,
+    pub dj_filter_pre: bool,
 }
 
 impl ParamSnapshot {
@@ -646,7 +688,6 @@ impl ParamSnapshot {
     pub fn capture(p: &SlammerParams) -> Self {
         Self {
             decay_ms: p.decay_ms.value(),
-            velocity_sens: p.velocity_sens.value(),
 
             sub_gain: p.sub_gain.value(),
             sub_fstart: p.sub_fstart.value(),
@@ -670,6 +711,7 @@ impl ParamSnapshot {
             top_decay_ms: p.top_decay_ms.value(),
             top_freq: p.top_freq.value(),
             top_bw: p.top_bw.value(),
+            top_metal: p.top_metal.value(),
 
             drift_amount: p.drift_amount.value(),
 
@@ -695,6 +737,10 @@ impl ParamSnapshot {
             clap_level: p.clap_level.value(),
             clap_freq: p.clap_freq.value(),
             clap_tail_ms: p.clap_tail_ms.value(),
+
+            dj_filter_pos: p.dj_filter_pos.value(),
+            dj_filter_res: p.dj_filter_res.value(),
+            dj_filter_pre: p.dj_filter_pre.value(),
         }
     }
 
@@ -709,7 +755,6 @@ impl ParamSnapshot {
             };
         }
         set!(p.decay_ms, self.decay_ms);
-        set!(p.velocity_sens, self.velocity_sens);
 
         set!(p.sub_gain, self.sub_gain);
         set!(p.sub_fstart, self.sub_fstart);
@@ -733,6 +778,7 @@ impl ParamSnapshot {
         set!(p.top_decay_ms, self.top_decay_ms);
         set!(p.top_freq, self.top_freq);
         set!(p.top_bw, self.top_bw);
+        set!(p.top_metal, self.top_metal);
 
         set!(p.drift_amount, self.drift_amount);
 
@@ -762,6 +808,12 @@ impl ParamSnapshot {
         set!(p.clap_level, self.clap_level);
         set!(p.clap_freq, self.clap_freq);
         set!(p.clap_tail_ms, self.clap_tail_ms);
+
+        set!(p.dj_filter_pos, self.dj_filter_pos);
+        set!(p.dj_filter_res, self.dj_filter_res);
+        setter.begin_set_parameter(&p.dj_filter_pre);
+        setter.set_parameter(&p.dj_filter_pre, self.dj_filter_pre);
+        setter.end_set_parameter(&p.dj_filter_pre);
     }
 }
 
@@ -800,6 +852,38 @@ mod clap_param_tests {
         assert_eq!(snap.clap_level, 0.0);
         assert_eq!(snap.clap_freq, 0.0);
         assert_eq!(snap.clap_tail_ms, 0.0);
+    }
+
+    #[test]
+    fn dj_filter_and_metal_defaults() {
+        let p = SlammerParams::default();
+        assert!((p.dj_filter_pos.value()).abs() < 1e-4);
+        assert!((p.dj_filter_res.value()).abs() < 1e-4);
+        assert!(!p.dj_filter_pre.value());
+        assert!((p.top_metal.value()).abs() < 1e-4);
+    }
+
+    #[test]
+    fn param_snapshot_roundtrip_dj_filter() {
+        let snap = ParamSnapshot {
+            dj_filter_pos: -0.6,
+            dj_filter_res: 0.4,
+            dj_filter_pre: true,
+            top_metal: 0.5,
+            ..ParamSnapshot::default()
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: ParamSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, snap);
+    }
+
+    #[test]
+    fn old_preset_loads_with_filter_defaults() {
+        let json = r#"{ "decay_ms": 120.0 }"#;
+        let snap: ParamSnapshot = serde_json::from_str(json).unwrap();
+        assert!((snap.dj_filter_pos).abs() < 1e-6);
+        assert!(!snap.dj_filter_pre);
+        assert!((snap.top_metal).abs() < 1e-6);
     }
 
     #[test]

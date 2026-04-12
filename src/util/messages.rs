@@ -24,8 +24,8 @@ const QUEUE_CAPACITY: usize = 32;
 /// Commands the UI thread can send to the audio thread.
 #[derive(Clone, Copy, Debug)]
 pub enum UiToDsp {
-    /// Fire the engine as if a NoteOn arrived. `velocity` is in 0..=1.
-    Trigger { velocity: f32 },
+    /// Fire the engine as if a NoteOn arrived.
+    Trigger,
 }
 
 /// Allocate a fresh UI → DSP channel. Call exactly once per plugin instance

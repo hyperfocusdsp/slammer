@@ -26,11 +26,10 @@ const PENDING_RING_SIZE: usize = 12;
 
 /// A single scheduled future engine trigger. Countdown is sample-based;
 /// when `samples_until` reaches 0 on a `tick_pending` call, the slot fires
-/// (returning its velocity) and is marked dead.
+/// and is marked dead.
 #[derive(Copy, Clone, Debug, Default)]
 struct PendingHit {
     samples_until: u32,
-    velocity: f32,
     live: bool,
 }
 
@@ -49,8 +48,8 @@ struct KickVoice {
     // TOP
     top_click: ClickGen,
     top_amp_env: AmpEnvelope,
-    /// Per-voice velocity captured at trigger time (used for `velocity_sens`).
-    velocity: f32,
+    metal_phase: f32,
+    sample_rate: f32,
     /// Voice-level output multiplier. Normally 1.0. When this voice is
     /// stolen, `fadeout_step` is set and `fadeout_gain` decreases linearly
     /// each sample until it reaches 0, at which point the voice is dead.
@@ -73,7 +72,8 @@ impl KickVoice {
             mid_noise: NoiseGen::new(sample_rate),
             top_click: ClickGen::new(sample_rate),
             top_amp_env: AmpEnvelope::new(sample_rate),
-            velocity: 0.0,
+            metal_phase: 0.0,
+            sample_rate,
             fadeout_gain: 1.0,
             fadeout_step: 0.0,
             triggered: false,
@@ -101,11 +101,9 @@ impl KickVoice {
     fn trigger(
         &mut self,
         params: &KickParams,
-        velocity: f32,
         drift: &mut Drift,
         sample_rate: f32,
     ) {
-        self.velocity = velocity;
         self.fadeout_gain = 1.0;
         self.fadeout_step = 0.0;
         self.triggered = true;
@@ -144,6 +142,7 @@ impl KickVoice {
         );
         self.top_click.trigger();
         self.top_amp_env.trigger(params.top_decay_ms);
+        self.metal_phase = 0.0;
     }
 
     /// Start a linear fadeout over `VOICE_FADEOUT_MS`. Called when this
@@ -177,13 +176,23 @@ impl KickVoice {
         let mid_noise = self.mid_noise.tick(params.mid_noise_color) * params.mid_noise_gain;
         let mid = (mid_tone + mid_noise) * params.mid_gain * mid_amp;
 
-        // TOP: click transient with its own amp envelope for anti-click
+        // TOP: click transient with optional metallic ring modulation
         let top_raw = self.top_click.tick();
         let top_amp = self.top_amp_env.tick();
-        let top = top_raw * params.top_gain * top_amp;
+        let top = if params.top_metal > 0.001 {
+            let mod_freq = params.top_freq * 2.4142;
+            let mod_out = (self.metal_phase * std::f32::consts::TAU).sin();
+            self.metal_phase += mod_freq / self.sample_rate;
+            if self.metal_phase >= 1.0 {
+                self.metal_phase -= self.metal_phase.floor();
+            }
+            let ring = 1.0 + params.top_metal * mod_out;
+            top_raw * ring * params.top_gain * top_amp
+        } else {
+            top_raw * params.top_gain * top_amp
+        };
 
-        let vel_gain = params.velocity_sens * self.velocity + (1.0 - params.velocity_sens);
-        let sample = (sub + mid + top) * vel_gain * self.fadeout_gain;
+        let sample = (sub + mid + top) * self.fadeout_gain;
 
         // Advance fadeout ramp (if any)
         if self.fadeout_step > 0.0 {
@@ -259,27 +268,25 @@ impl KickEngine {
     /// is full (pathological — 12 slots covers 4 hits × 3 overlapping steps,
     /// which is beyond musically reasonable).
     #[cfg(test)]
-    fn push_pending_internal(&mut self, samples_until: u32, velocity: f32) {
+    fn push_pending_internal(&mut self, samples_until: u32) {
         for slot in &mut self.pending {
             if !slot.live {
                 slot.samples_until = samples_until;
-                slot.velocity = velocity;
                 slot.live = true;
                 return;
             }
         }
     }
 
-    /// Advance the ring by one sample. Writes the velocity of any hits that
-    /// fire this sample into `out`, returning how many were written.
-    fn tick_pending_internal(&mut self, out: &mut [f32; PENDING_RING_SIZE]) -> usize {
+    /// Advance the ring by one sample. Returns the number of hits that fired
+    /// this sample (caller should fire one engine trigger per fired hit).
+    fn tick_pending_internal(&mut self) -> usize {
         let mut count = 0;
         for slot in &mut self.pending {
             if !slot.live {
                 continue;
             }
             if slot.samples_until == 0 {
-                out[count] = slot.velocity;
                 count += 1;
                 slot.live = false;
             } else {
@@ -290,18 +297,16 @@ impl KickEngine {
     }
 
     #[cfg(test)]
-    pub fn push_pending(&mut self, samples_until: u32, velocity: f32) {
-        self.push_pending_internal(samples_until, velocity);
+    pub fn push_pending(&mut self, samples_until: u32) {
+        self.push_pending_internal(samples_until);
     }
 
     #[cfg(test)]
-    pub fn tick_pending_for_test(&mut self) -> Vec<f32> {
-        let mut out = [0.0f32; PENDING_RING_SIZE];
-        let n = self.tick_pending_internal(&mut out);
-        out[..n].to_vec()
+    pub fn tick_pending_for_test(&mut self) -> usize {
+        self.tick_pending_internal()
     }
 
-    pub fn trigger(&mut self, params: &KickParams, velocity: f32) {
+    pub fn trigger(&mut self, params: &KickParams) {
         // Voice stealing: if the currently-active slot is still audible,
         // start its fadeout and flip to the other slot so the new hit lands
         // on clean state. The old voice keeps ticking in parallel during
@@ -320,7 +325,6 @@ impl KickEngine {
         }
         self.voices[self.active_voice].trigger(
             params,
-            velocity,
             &mut self.drift,
             self.sample_rate,
         );
@@ -359,12 +363,11 @@ impl KickEngine {
 
         let sat_mode = SatMode::from_u8(params.sat_mode);
         let mut peak = 0.0f32;
-        let mut fired_buf = [0.0f32; PENDING_RING_SIZE];
 
         for (l, r) in output_left.iter_mut().zip(output_right.iter_mut()) {
             // Fire any scheduled hits whose countdown reached zero this sample.
-            let n_fired = self.tick_pending_internal(&mut fired_buf);
-            for &vel in fired_buf.iter().take(n_fired) {
+            let n_fired = self.tick_pending_internal();
+            for _ in 0..n_fired {
                 if self.voices[self.active_voice].is_active() {
                     self.voices[self.active_voice].start_fadeout(self.sample_rate);
                     self.active_voice = (self.active_voice + 1) % NUM_VOICES;
@@ -374,7 +377,6 @@ impl KickEngine {
                 }
                 self.voices[self.active_voice].trigger(
                     params,
-                    vel,
                     &mut self.drift,
                     self.sample_rate,
                 );
@@ -424,7 +426,6 @@ impl KickEngine {
 pub struct KickParams {
     pub master_gain: f32,
     pub decay_ms: f32,
-    pub velocity_sens: f32,
 
     // SUB
     pub sub_gain: f32,
@@ -451,6 +452,7 @@ pub struct KickParams {
     pub top_decay_ms: f32,
     pub top_freq: f32,
     pub top_bw: f32,
+    pub top_metal: f32,
 
     // Saturation
     pub sat_mode: u8,
@@ -479,7 +481,6 @@ impl Default for KickParams {
         Self {
             master_gain: 1.0,
             decay_ms: 400.0,
-            velocity_sens: 0.8,
 
             sub_gain: 0.85,
             sub_fstart: 150.0,
@@ -503,6 +504,7 @@ impl Default for KickParams {
             top_decay_ms: 6.0,
             top_freq: 3500.0,
             top_bw: 1.5,
+            top_metal: 0.0,
 
             sat_mode: 0,
             sat_drive: 0.0,
@@ -532,7 +534,7 @@ mod tests {
     fn trigger_produces_nonzero_output() {
         let mut engine = KickEngine::new(44100.0);
         let params = KickParams::default();
-        engine.trigger(&params, 1.0);
+        engine.trigger(&params);
         let mut left = vec![0.0f32; 512];
         let mut right = vec![0.0f32; 512];
         let peak = engine.process(&mut left, &mut right, &params);
@@ -547,7 +549,7 @@ mod tests {
             mid_decay_ms: 50.0,
             ..KickParams::default()
         };
-        engine.trigger(&params, 1.0);
+        engine.trigger(&params);
         let mut left = vec![0.0f32; 22050];
         let mut right = vec![0.0f32; 22050];
         engine.process(&mut left, &mut right, &params);
@@ -555,29 +557,14 @@ mod tests {
     }
 
     #[test]
-    fn velocity_zero_is_quiet() {
-        let mut engine = KickEngine::new(44100.0);
-        let params = KickParams {
-            velocity_sens: 1.0,
-            ..KickParams::default()
-        };
-        engine.trigger(&params, 0.0);
-        let mut left = vec![0.0f32; 512];
-        let mut right = vec![0.0f32; 512];
-        engine.process(&mut left, &mut right, &params);
-        let max = left.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
-        assert!(max < 0.001, "expected silence with velocity 0, got {}", max);
-    }
-
-    #[test]
     fn retrigger_no_panic() {
         let mut engine = KickEngine::new(44100.0);
         let params = KickParams::default();
-        engine.trigger(&params, 1.0);
+        engine.trigger(&params);
         let mut left = vec![0.0f32; 64];
         let mut right = vec![0.0f32; 64];
         engine.process(&mut left, &mut right, &params);
-        engine.trigger(&params, 0.8);
+        engine.trigger(&params);
         left.fill(0.0);
         right.fill(0.0);
         engine.process(&mut left, &mut right, &params);
@@ -594,14 +581,14 @@ mod tests {
             sat_drive: 0.8,
             ..KickParams::default()
         };
-        engine.trigger(&params, 1.0);
+        engine.trigger(&params);
         let mut left_sat = vec![0.0f32; 512];
         let mut right_sat = vec![0.0f32; 512];
         engine.process(&mut left_sat, &mut right_sat, &params);
 
         let mut engine2 = KickEngine::new(44100.0);
         params.sat_mode = 0; // Off
-        engine2.trigger(&params, 1.0);
+        engine2.trigger(&params);
         let mut left_dry = vec![0.0f32; 512];
         let mut right_dry = vec![0.0f32; 512];
         engine2.process(&mut left_dry, &mut right_dry, &params);
@@ -657,7 +644,7 @@ mod tests {
         // First hit: render 128 samples.
         let mut l1 = vec![0.0f32; 128];
         let mut r1 = vec![0.0f32; 128];
-        engine.trigger(&params, 1.0);
+        engine.trigger(&params);
         engine.process(&mut l1, &mut r1, &params);
 
         // Render enough samples for ALL envelopes to fully decay.
@@ -672,7 +659,7 @@ mod tests {
         // Second hit: render 128 samples from the same engine.
         let mut l2 = vec![0.0f32; 128];
         let mut r2 = vec![0.0f32; 128];
-        engine.trigger(&params, 1.0);
+        engine.trigger(&params);
         engine.process(&mut l2, &mut r2, &params);
 
         // The first 128 samples of both hits should match closely. Any
@@ -711,7 +698,7 @@ mod tests {
         // reference — we only care about the max per-sample delta here.
         let mut l_ref = vec![0.0f32; 2048];
         let mut r_ref = vec![0.0f32; 2048];
-        engine.trigger(&params, 1.0);
+        engine.trigger(&params);
         engine.process(&mut l_ref, &mut r_ref, &params);
         let (_, ref_max) = max_abs_delta(&l_ref);
 
@@ -721,12 +708,12 @@ mod tests {
         let mut engine = KickEngine::new(44100.0);
         let mut l = vec![0.0f32; 2048];
         let mut r = vec![0.0f32; 2048];
-        engine.trigger(&params, 1.0);
+        engine.trigger(&params);
         // Run the first hit for 128 samples (well inside decay, past
         // attack ramp).
         engine.process(&mut l[..128], &mut r[..128], &params);
         // Retrigger and render the transition window.
-        engine.trigger(&params, 1.0);
+        engine.trigger(&params);
         engine.process(&mut l[128..], &mut r[128..], &params);
 
         let (idx, jump) = max_abs_delta(&l);
@@ -749,7 +736,7 @@ mod tests {
         // discontinuity.
         let mut engine = KickEngine::new(44100.0);
         let params = KickParams::default();
-        engine.trigger(&params, 1.0);
+        engine.trigger(&params);
 
         // Process well into the decay (~0.7 ms) but before the attack ramp
         // has fully finished on a fresh hit, so we're sampling the steady
@@ -761,7 +748,7 @@ mod tests {
         assert!(prev.abs() > 0.01, "expected nonzero decay tail, got {}", prev);
 
         // Retrigger, then process a single sample.
-        engine.trigger(&params, 1.0);
+        engine.trigger(&params);
         let mut l1 = vec![0.0f32; 1];
         let mut r1 = vec![0.0f32; 1];
         engine.process(&mut l1, &mut r1, &params);
@@ -785,7 +772,7 @@ mod tests {
     fn no_click_on_trigger() {
         let mut engine = KickEngine::new(44100.0);
         let params = KickParams::default();
-        engine.trigger(&params, 1.0);
+        engine.trigger(&params);
         let mut left = vec![0.0f32; 8];
         let mut right = vec![0.0f32; 8];
         engine.process(&mut left, &mut right, &params);
@@ -797,28 +784,26 @@ mod tests {
         );
     }
 
-    // ---- Flam: pending ring + RNG ----
+    // ---- Pending ring (sequencer scheduling) ----
 
     #[test]
     fn pending_ring_fires_hits_in_order() {
         let mut eng = KickEngine::new(48000.0);
-        eng.push_pending(0, 0.7);
-        eng.push_pending(720, 0.85);
-        eng.push_pending(1440, 1.0);
+        eng.push_pending(0);
+        eng.push_pending(720);
+        eng.push_pending(1440);
 
-        let mut fired: Vec<(usize, f32)> = Vec::new();
+        let mut fired: Vec<usize> = Vec::new();
         for sample in 0..1500 {
-            for v in eng.tick_pending_for_test() {
-                fired.push((sample, v));
+            let n = eng.tick_pending_for_test();
+            for _ in 0..n {
+                fired.push(sample);
             }
         }
         assert_eq!(fired.len(), 3, "should fire exactly 3 hits, got {fired:?}");
-        assert_eq!(fired[0].0, 0);
-        assert!((fired[0].1 - 0.7).abs() < 1e-6);
-        assert_eq!(fired[1].0, 720);
-        assert!((fired[1].1 - 0.85).abs() < 1e-6);
-        assert_eq!(fired[2].0, 1440);
-        assert!((fired[2].1 - 1.0).abs() < 1e-6);
+        assert_eq!(fired[0], 0);
+        assert_eq!(fired[1], 720);
+        assert_eq!(fired[2], 1440);
     }
 
     #[test]
@@ -829,9 +814,59 @@ mod tests {
         }
         let mut count = 0;
         for _ in 0..10 {
-            count += eng.tick_pending_for_test().len();
+            count += eng.tick_pending_for_test();
         }
         assert_eq!(count, 0, "idle ring should fire nothing");
+    }
+
+    // ---- Metal ring mod ----
+
+    #[test]
+    fn metal_zero_is_identical_to_no_metal() {
+        let params = KickParams::default();
+        assert!(params.top_metal < 0.001);
+        let mut e1 = KickEngine::new(48000.0);
+        e1.trigger(&params);
+        let mut l1 = vec![0.0f32; 1024];
+        let mut r1 = vec![0.0f32; 1024];
+        e1.process(&mut l1, &mut r1, &params);
+
+        let mut e2 = KickEngine::new(48000.0);
+        e2.trigger(&params);
+        let mut l2 = vec![0.0f32; 1024];
+        let mut r2 = vec![0.0f32; 1024];
+        e2.process(&mut l2, &mut r2, &params);
+        assert_eq!(l1, l2, "metal=0 must be deterministic / bit-identical");
+    }
+
+    #[test]
+    fn metal_changes_top_output() {
+        let params_no = KickParams {
+            top_metal: 0.0,
+            top_gain: 1.0,
+            mid_gain: 0.0,
+            sub_gain: 0.0,
+            ..KickParams::default()
+        };
+        let params_yes = KickParams {
+            top_metal: 0.8,
+            ..params_no
+        };
+
+        let mut e1 = KickEngine::new(48000.0);
+        e1.trigger(&params_no);
+        let mut l1 = vec![0.0f32; 512];
+        let mut r1 = vec![0.0f32; 512];
+        e1.process(&mut l1, &mut r1, &params_no);
+
+        let mut e2 = KickEngine::new(48000.0);
+        e2.trigger(&params_yes);
+        let mut l2 = vec![0.0f32; 512];
+        let mut r2 = vec![0.0f32; 512];
+        e2.process(&mut l2, &mut r2, &params_yes);
+
+        let diff: f32 = l1.iter().zip(l2.iter()).map(|(a, b)| (a - b).abs()).sum();
+        assert!(diff > 0.1, "metal should change the click character, diff={diff}");
     }
 
     // ---- Clap layer ----
@@ -843,7 +878,7 @@ mod tests {
             clap_on: false,
             ..KickParams::default()
         };
-        eng.trigger(&params, 1.0);
+        eng.trigger(&params);
         let mut l = vec![0.0f32; 4096];
         let mut r = vec![0.0f32; 4096];
         eng.process(&mut l, &mut r, &params);
@@ -851,7 +886,7 @@ mod tests {
         let baseline: Vec<f32> = l.clone();
 
         let mut eng2 = KickEngine::new(48000.0);
-        eng2.trigger(&params, 1.0);
+        eng2.trigger(&params);
         let mut l2 = vec![0.0f32; 4096];
         let mut r2 = vec![0.0f32; 4096];
         eng2.process(&mut l2, &mut r2, &params);
@@ -870,13 +905,13 @@ mod tests {
         };
 
         let mut e_off = KickEngine::new(48000.0);
-        e_off.trigger(&off_params, 1.0);
+        e_off.trigger(&off_params);
         let mut l_off = vec![0.0f32; 16384];
         let mut r_off = vec![0.0f32; 16384];
         e_off.process(&mut l_off, &mut r_off, &off_params);
 
         let mut e_on = KickEngine::new(48000.0);
-        e_on.trigger(&on_params, 1.0);
+        e_on.trigger(&on_params);
         let mut l_on = vec![0.0f32; 16384];
         let mut r_on = vec![0.0f32; 16384];
         e_on.process(&mut l_on, &mut r_on, &on_params);
@@ -898,5 +933,62 @@ mod tests {
             on_rms > off_rms + 1e-5,
             "clap on should add tail energy: off={off_rms} on={on_rms}"
         );
+    }
+
+    /// Scan engine output for sample-to-sample jumps that would be audible as
+    /// clicks. Covers default params, clap-on, and metal-on configurations.
+    #[test]
+    fn no_discontinuities_in_output() {
+        let configs: Vec<(&str, KickParams)> = vec![
+            ("default", KickParams::default()),
+            (
+                "clap_on",
+                KickParams {
+                    clap_on: true,
+                    clap_level: 0.5,
+                    ..KickParams::default()
+                },
+            ),
+            (
+                "metal",
+                KickParams {
+                    top_metal: 0.8,
+                    top_gain: 0.7,
+                    ..KickParams::default()
+                },
+            ),
+            (
+                "clap+metal",
+                KickParams {
+                    clap_on: true,
+                    clap_level: 0.5,
+                    top_metal: 0.6,
+                    top_gain: 0.7,
+                    ..KickParams::default()
+                },
+            ),
+        ];
+
+        for (name, params) in &configs {
+            let mut engine = KickEngine::new(48000.0);
+            engine.trigger(params);
+            let n = 8192;
+            let mut left = vec![0.0f32; n];
+            let mut right = vec![0.0f32; n];
+            engine.process(&mut left, &mut right, params);
+
+            // Skip sample 0 (always ~0 due to attack ramp).
+            let (idx, jump) = max_abs_delta(&left[1..]);
+            assert!(
+                jump < 0.5,
+                "[{name}] discontinuity at sample {}: delta = {jump:.4}",
+                idx + 1
+            );
+
+            // Also verify no NaN/inf snuck through.
+            for (i, &s) in left.iter().enumerate() {
+                assert!(s.is_finite(), "[{name}] non-finite at sample {i}: {s}");
+            }
+        }
     }
 }

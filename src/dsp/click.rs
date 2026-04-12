@@ -43,24 +43,29 @@ impl ClickGen {
             self.buffer[i] = (rng as f32 / u32::MAX as f32) * 2.0 - 1.0;
         }
 
-        // Apply 2-pole bandpass (SVF)
+        // Apply 2-pole bandpass (trapezoidal SVF — stable at all freqs)
         let f0 = center_freq / sample_rate;
-        let q = 1.0
+        let q = (1.0
             / (2.0
                 * (std::f32::consts::LN_2 / 2.0 * bw_oct * (std::f32::consts::TAU * f0)
                     / (std::f32::consts::TAU * f0).sin())
-                .sinh());
-        let w = (std::f32::consts::PI * f0).sin() * 2.0;
-        let damp = 1.0 / q.max(0.5);
+                .sinh()))
+        .max(0.5);
+        let k = 1.0 / q;
+        let g = (std::f32::consts::PI * f0).tan();
+        let a1 = 1.0 / (1.0 + g * (g + k));
+        let a2 = g * a1;
+        let a3 = g * a2;
 
-        let mut lp = 0.0f32;
-        let mut bp = 0.0f32;
+        let mut ic1 = 0.0f32;
+        let mut ic2 = 0.0f32;
         for i in 0..self.len {
-            let input = self.buffer[i];
-            lp += w * bp;
-            let hp = input - lp - damp * bp;
-            bp += w * hp;
-            self.buffer[i] = bp; // bandpass output
+            let v3 = self.buffer[i] - ic2;
+            let v1 = a1 * ic1 + a2 * v3;
+            let v2 = ic2 + a2 * ic1 + a3 * v3;
+            ic1 = 2.0 * v1 - ic1;
+            ic2 = 2.0 * v2 - ic2;
+            self.buffer[i] = v1; // bandpass output
         }
 
         // Apply amplitude envelope (linear fade-out)

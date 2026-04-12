@@ -44,6 +44,7 @@ pub const SECTION_SUB: egui::Color32 = egui::Color32::from_rgb(0x85, 0x90, 0xa0)
 pub const SECTION_MID: egui::Color32 = egui::Color32::from_rgb(0x4e, 0x9a, 0x52); // forest green
 pub const SECTION_SAT: egui::Color32 = egui::Color32::from_rgb(0xc5, 0x2e, 0x2e); // oxide red
 pub const SECTION_EQ: egui::Color32 = egui::Color32::from_rgb(0x3d, 0x44, 0x4b); // gunmetal
+pub const SECTION_MASTER: egui::Color32 = egui::Color32::from_rgb(0x3a, 0x78, 0xc8); // electric blue
 
 // Grooves & hardware
 pub const GROOVE_DARK: egui::Color32 =
