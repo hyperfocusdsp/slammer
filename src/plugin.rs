@@ -6,6 +6,7 @@ use nih_plug::prelude::*;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
+use crate::dsp::dj_filter::DjFilter;
 use crate::dsp::engine::KickEngine;
 use crate::dsp::master_bus::MasterBus;
 use crate::dsp::tube::TubeWarmth;
@@ -26,6 +27,7 @@ pub struct Slammer {
     /// the master volume knob is pushed past 0 dB; silent (bit-identical
     /// bypass) below unity gain.
     tube_warmth: TubeWarmth,
+    dj_filter: DjFilter,
     sample_rate: f32,
     pub telemetry_tx: Option<TelemetryProducer>,
     pub telemetry_rx_holder: Option<telemetry::TelemetryConsumer>,
@@ -66,6 +68,7 @@ impl Default for Slammer {
             engine: KickEngine::new(44100.0),
             master_bus: MasterBus::new(),
             tube_warmth: TubeWarmth::new(),
+            dj_filter: DjFilter::new(),
             sample_rate: 44100.0,
             telemetry_tx: Some(telem_tx),
             telemetry_rx_holder: Some(telem_rx),
@@ -141,6 +144,7 @@ impl Plugin for Slammer {
         );
         self.engine.set_sample_rate(self.sample_rate);
         self.master_bus.prepare(self.sample_rate);
+        self.dj_filter.set_sample_rate(self.sample_rate);
         // nih-plug has already deserialized `params.seq_steps` at this
         // point; copy the bitmask into the sequencer atomics so the first
         // `process()` call sees the restored pattern.
@@ -152,6 +156,7 @@ impl Plugin for Slammer {
         // Clear compressor/limiter state so a DAW play/stop cycle doesn't
         // carry over envelope history across a seek.
         self.master_bus.prepare(self.sample_rate);
+        self.dj_filter.reset();
     }
 
     fn process(
@@ -166,15 +171,15 @@ impl Plugin for Slammer {
         // Drain UI → DSP messages (lock-free, non-blocking).
         while let Ok(msg) = self.ui_rx.pop() {
             match msg {
-                UiToDsp::Trigger { velocity } => {
-                    self.engine.trigger(&kick_params, velocity);
+                UiToDsp::Trigger => {
+                    self.engine.trigger(&kick_params);
                 }
             }
         }
 
         while let Some(event) = context.next_event() {
-            if let NoteEvent::NoteOn { velocity, .. } = event {
-                self.engine.trigger(&kick_params, velocity);
+            if let NoteEvent::NoteOn { .. } = event {
+                self.engine.trigger(&kick_params);
             }
         }
 
@@ -216,7 +221,7 @@ impl Plugin for Slammer {
                             .current_step
                             .store(new_step, Ordering::Relaxed);
                         if self.sequencer.steps[new_step].load(Ordering::Relaxed) {
-                            self.engine.trigger(&collect_kick_params(&self.params), 1.0);
+                            self.engine.trigger(&collect_kick_params(&self.params));
                         }
                     }
                 }
@@ -245,7 +250,7 @@ impl Plugin for Slammer {
                 self.seq_current_step = 0;
                 self.sequencer.current_step.store(0, Ordering::Relaxed);
                 if self.sequencer.steps[0].load(Ordering::Relaxed) {
-                    self.engine.trigger(&collect_kick_params(&self.params), 1.0);
+                    self.engine.trigger(&collect_kick_params(&self.params));
                 }
             }
             self.seq_running_prev = running;
@@ -260,7 +265,7 @@ impl Plugin for Slammer {
                         .current_step
                         .store(self.seq_current_step, Ordering::Relaxed);
                     if self.sequencer.steps[self.seq_current_step].load(Ordering::Relaxed) {
-                        self.engine.trigger(&collect_kick_params(&self.params), 1.0);
+                        self.engine.trigger(&collect_kick_params(&self.params));
                     }
                 }
             } else {
@@ -280,7 +285,18 @@ impl Plugin for Slammer {
             // the engine. Its reported peak is pre-comp / pre-master and is
             // intentionally ignored — the telemetry ring is fed post-comp
             // below so the OUTPUT waveform reflects the compressed signal.
-            let _ = self.engine.process(output_left, output_right, &kick_params);
+            let _engine_peak = self.engine.process(output_left, output_right, &kick_params);
+
+            // Sanitize engine output — if a voice produced NaN/inf (e.g.
+            // from an unstable filter), clamp to zero so the downstream
+            // comp / filter / warmth state doesn't get permanently
+            // corrupted. Without this, one bad sample kills audio until
+            // the plugin is reloaded.
+            for s in output_left.iter_mut().chain(output_right.iter_mut()) {
+                if !s.is_finite() {
+                    *s = 0.0;
+                }
+            }
 
             // Snapshot bypass-able state once per buffer. Smoothed macro
             // params are pulled inside the per-sample loop.
@@ -289,6 +305,7 @@ impl Plugin for Slammer {
 
             let mut post_peak = 0.0f32;
             let mut max_gr_db = 0.0f32;
+            let mut nan_detected = false;
 
             for (l, r) in output_left.iter_mut().zip(output_right.iter_mut()) {
                 // Smoothed pulls — cheap scalar arithmetic.
@@ -303,20 +320,26 @@ impl Plugin for Slammer {
                 let rel_ms = self.params.comp_rel_ms.smoothed.next();
                 let knee_db = self.params.comp_knee_db.smoothed.next();
                 let master_gain = self.params.master_volume.smoothed.next();
+                let filt_pos = self.params.dj_filter_pos.smoothed.next();
+                let filt_res = self.params.dj_filter_res.smoothed.next();
+                let filt_pre = self.params.dj_filter_pre.value();
 
-                // Macro → DSP mapping for AMT (threshold + ratio stay
-                // coupled; ATK/REL/KNE are read directly from params).
-                let threshold_db = -6.0 + amount * -24.0; // -6 .. -30
-                let ratio = 2.0 + amount * 8.0; // 2:1 .. 10:1
+                let threshold_db = -6.0 + amount * -24.0;
+                let ratio = 2.0 + amount * 8.0;
 
                 self.master_bus.set_times(atk_ms, rel_ms, sr);
 
-                // Bypass when fully clean to stay bit-identical to the
-                // pre-comp build on default settings.
+                // DJ Filter PRE: before comp
+                let (pre_l, pre_r) = if filt_pre {
+                    self.dj_filter.process_sample(*l, *r, filt_pos, filt_res)
+                } else {
+                    (*l, *r)
+                };
+
                 let (cl, cr) = if amount > 0.0001 || drive > 0.001 || limiter_on {
                     self.master_bus.process_sample(
-                        *l,
-                        *r,
+                        pre_l,
+                        pre_r,
                         threshold_db,
                         ratio,
                         knee_db,
@@ -324,23 +347,31 @@ impl Plugin for Slammer {
                         limiter_on,
                     )
                 } else {
-                    (*l, *r)
+                    (pre_l, pre_r)
                 };
 
-                // Tube warmth: engaged automatically when the master volume
-                // knob is pushed past 0 dB (linear gain > 1.0). `amount`
-                // ramps 0 → 1 as the gain climbs from unity to +6 dB. Below
-                // unity the stage is bit-identical bypass, so nothing
-                // changes for users who don't push the knob.
-                const UNITY_TO_PLUS_6DB: f32 = 1.995_262_3 - 1.0; // db_to_gain(6) − 1
+                const UNITY_TO_PLUS_6DB: f32 = 1.995_262_3 - 1.0;
                 let warmth_amount =
                     ((master_gain - 1.0) / UNITY_TO_PLUS_6DB).clamp(0.0, 1.0);
                 let (wl, wr) = self.tube_warmth.process_sample(cl, cr, warmth_amount);
 
-                let ol = wl * master_gain;
-                let or_ = wr * master_gain;
-                *l = ol;
-                *r = or_;
+                // DJ Filter POST: after warmth, before master volume
+                let (fl, fr) = if !filt_pre {
+                    self.dj_filter.process_sample(wl, wr, filt_pos, filt_res)
+                } else {
+                    (wl, wr)
+                };
+
+                let ol = fl * master_gain;
+                let or_ = fr * master_gain;
+                if ol.is_finite() && or_.is_finite() {
+                    *l = ol;
+                    *r = or_;
+                } else {
+                    *l = 0.0;
+                    *r = 0.0;
+                    nan_detected = true;
+                }
 
                 let sample_peak = ol.abs().max(or_.abs());
                 if sample_peak > post_peak {
@@ -350,6 +381,15 @@ impl Plugin for Slammer {
                 if gr > max_gr_db {
                     max_gr_db = gr;
                 }
+            }
+
+            // If any sample in this buffer was non-finite, reset filter
+            // and comp state once so the next buffer starts clean.
+            // NOTE: no tracing/logging here — we're on the audio thread and
+            // assert_process_allocs will panic on any heap allocation.
+            if nan_detected {
+                self.dj_filter.reset();
+                self.master_bus.prepare(sr);
             }
 
             if let Some(ref mut tx) = self.telemetry_tx {
@@ -381,4 +421,136 @@ impl Vst3Plugin for Slammer {
         Vst3SubCategory::Synth,
         Vst3SubCategory::Drum,
     ];
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dsp::engine::KickParams;
+
+    /// Integration test: exercise the full master chain (engine → NaN guard →
+    /// comp → warmth → DJ filter → master gain) and verify the output is
+    /// non-zero. Catches bugs where individual stages are fine but the
+    /// plugin-level wiring silences the signal.
+    #[test]
+    fn full_chain_produces_output() {
+        let sr = 48000.0;
+        let n = 1024;
+
+        let mut engine = KickEngine::new(sr);
+        let mut master_bus = MasterBus::new();
+        let mut tube = TubeWarmth::new();
+        let mut filt = DjFilter::new();
+        master_bus.prepare(sr);
+        filt.set_sample_rate(sr);
+
+        let params = KickParams::default();
+        engine.trigger(&params);
+
+        let mut left = vec![0.0f32; n];
+        let mut right = vec![0.0f32; n];
+        engine.process(&mut left, &mut right, &params);
+
+        // Sanitize (mirrors plugin.rs)
+        for s in left.iter_mut().chain(right.iter_mut()) {
+            if !s.is_finite() {
+                *s = 0.0;
+            }
+        }
+
+        let mut peak = 0.0f32;
+        for (l, r) in left.iter_mut().zip(right.iter_mut()) {
+            // Default params: comp bypassed, filter bypassed, warmth bypassed
+            master_bus.set_times(10.0, 100.0, sr);
+            let (fl, fr) = filt.process_sample(*l, *r, 0.0, 0.0);
+            let (wl, wr) = tube.process_sample(fl, fr, 0.0);
+            let ol = wl * 1.0; // master_gain = 1.0
+            let or_ = wr * 1.0;
+            *l = ol;
+            *r = or_;
+            peak = peak.max(ol.abs().max(or_.abs()));
+        }
+
+        assert!(
+            peak > 0.01,
+            "full chain must produce audible output, got peak {}",
+            peak
+        );
+        // Also verify no NaN snuck through
+        assert!(peak.is_finite(), "output must be finite");
+    }
+
+    /// Simulate rapid retriggering (120 BPM 16th notes) through the full
+    /// master chain with comp engaged. Checks for discontinuities that
+    /// would be audible as clicks.
+    #[test]
+    fn full_chain_no_clicks_on_retrigger() {
+        let sr = 48000.0;
+        // 120 BPM 16th notes = 8 hits/sec → 6000 samples between hits
+        let hit_interval = 6000usize;
+        let num_hits = 8;
+        let total = hit_interval * num_hits;
+
+        let mut engine = KickEngine::new(sr);
+        let mut master_bus = MasterBus::new();
+        let mut tube = TubeWarmth::new();
+        let mut filt = DjFilter::new();
+        master_bus.prepare(sr);
+        filt.set_sample_rate(sr);
+
+        let params = KickParams {
+            clap_on: true,
+            ..KickParams::default()
+        };
+
+        let mut output = vec![0.0f32; total];
+
+        for hit in 0..num_hits {
+            let start = hit * hit_interval;
+            let end = (start + hit_interval).min(total);
+            let len = end - start;
+
+            engine.trigger(&params);
+            let mut buf_l = vec![0.0f32; len];
+            let mut buf_r = vec![0.0f32; len];
+            engine.process(&mut buf_l, &mut buf_r, &params);
+
+            // Run through master chain with comp engaged
+            for i in 0..len {
+                master_bus.set_times(10.0, 200.0, sr);
+                let (cl, cr) = master_bus.process_sample(
+                    buf_l[i], buf_r[i], -18.0, 4.0, 6.0, 0.0, false,
+                );
+                let (wl, _wr) = tube.process_sample(cl, cr, 0.0);
+                let (fl, _fr) = filt.process_sample(wl, wl, 0.0, 0.0);
+                output[start + i] = fl;
+            }
+        }
+
+        // Check for hard clicks: a per-sample delta > 0.4 in the
+        // compressor output is suspicious.
+        let mut worst_delta = 0.0f32;
+        let mut worst_idx = 0;
+        for i in 1..total {
+            let d = (output[i] - output[i - 1]).abs();
+            if d > worst_delta {
+                worst_delta = d;
+                worst_idx = i;
+            }
+        }
+        // Identify which hit boundary the worst delta is near
+        let near_hit = worst_idx / hit_interval;
+        eprintln!(
+            "worst delta = {worst_delta:.6} at sample {worst_idx} (near hit {near_hit})"
+        );
+        assert!(
+            worst_delta < 0.4,
+            "click detected at sample {worst_idx}: delta = {worst_delta:.4}"
+        );
+
+        // Verify no NaN
+        for (i, &s) in output.iter().enumerate() {
+            assert!(s.is_finite(), "non-finite at sample {i}");
+        }
+    }
 }

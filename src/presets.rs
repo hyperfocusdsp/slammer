@@ -58,7 +58,6 @@ pub fn factory_presets() -> Vec<PresetEntry> {
             is_factory: true,
             params: ParamSnapshot {
                 decay_ms: 500.0,
-                velocity_sens: 0.7,
                 sub_gain: 0.95,
                 sub_fstart: 120.0,
                 sub_fend: 40.0,
@@ -97,7 +96,6 @@ pub fn factory_presets() -> Vec<PresetEntry> {
             is_factory: true,
             params: ParamSnapshot {
                 decay_ms: 350.0,
-                velocity_sens: 0.8,
                 sub_gain: 0.85,
                 sub_fstart: 180.0,
                 sub_fend: 45.0,
@@ -136,7 +134,6 @@ pub fn factory_presets() -> Vec<PresetEntry> {
             is_factory: true,
             params: ParamSnapshot {
                 decay_ms: 300.0,
-                velocity_sens: 0.8,
                 sub_gain: 0.80,
                 sub_fstart: 200.0,
                 sub_fend: 50.0,

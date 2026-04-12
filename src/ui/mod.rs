@@ -5,6 +5,7 @@ pub mod editor;
 pub mod knob;
 pub mod panels;
 pub mod preset_bar;
+pub mod randomize;
 pub mod seven_seg;
 pub mod theme;
 pub mod widgets;

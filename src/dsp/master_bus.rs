@@ -204,6 +204,9 @@ impl MasterBus {
             self.comp_release_coeff
         };
         self.env_db = env_coeff * self.env_db + (1.0 - env_coeff) * rms_db;
+        if !self.env_db.is_finite() {
+            self.env_db = -60.0;
+        }
 
         // Gain computation with optional soft knee.
         //

@@ -89,6 +89,10 @@ pub struct Saturation {
     /// One-pole LP state for Clip's split-band low extraction. The lows
     /// bypass the shaper; (input − lp) is what gets clipped.
     clip_lp_z: f32,
+    /// Precomputed one-pole coefficient for the Clip split-band LP. Depends
+    /// only on CLIP_SPLIT_HZ and sample_rate, so it is constant between
+    /// sample-rate changes and must not be recomputed per sample.
+    clip_lp_alpha: f32,
     /// One-pole LP state for Tape's drive-dependent HF loss.
     tape_lp_z: f32,
     /// Previous post-shape output (for hysteresis memory term).
@@ -96,21 +100,32 @@ pub struct Saturation {
     /// Previous raw shaper output at the previous input (the subtracted
     /// term in the hysteresis model, so that steady-state DC doesn't drift).
     tape_prev_fx: f32,
-    sample_rate: f32,
+    /// Precomputed `1.0 / sample_rate`. Used in process_tape to avoid a
+    /// division per sample; rc still varies with drive so it stays inline.
+    sample_period: f32,
 }
 
 impl Saturation {
     pub fn new(sample_rate: f32) -> Self {
+        let sample_period = 1.0 / sample_rate;
+        let clip_lp_alpha = {
+            let rc = 1.0 / (std::f32::consts::TAU * CLIP_SPLIT_HZ);
+            sample_period / (rc + sample_period)
+        };
         Self {
             clip_lp_z: 0.0,
+            clip_lp_alpha,
             tape_lp_z: 0.0,
             tape_prev_y: 0.0,
             tape_prev_fx: 0.0,
-            sample_rate,
+            sample_period,
         }
     }
 
-    #[allow(dead_code)]
+    /// Reset filter state. Only meaningful between unrelated signals — do NOT
+    /// call this on voice steal: saturation is a shared serial chain and
+    /// resetting mid-signal would cause an audible click. Used in tests only.
+    #[cfg(test)]
     pub fn reset(&mut self) {
         self.clip_lp_z = 0.0;
         self.tape_lp_z = 0.0;
@@ -173,10 +188,7 @@ impl Saturation {
     /// `tanh` curve.
     #[inline]
     fn process_clip(&mut self, x: f32) -> f32 {
-        let rc = 1.0 / (std::f32::consts::TAU * CLIP_SPLIT_HZ);
-        let dt = 1.0 / self.sample_rate;
-        let alpha = dt / (rc + dt);
-        self.clip_lp_z += alpha * (x - self.clip_lp_z);
+        self.clip_lp_z += self.clip_lp_alpha * (x - self.clip_lp_z);
         self.clip_lp_z = flush_denormal(self.clip_lp_z);
 
         let lows = self.clip_lp_z;
@@ -217,7 +229,7 @@ impl Saturation {
         // fingerprint that distinguishes tape from tanh/rational clippers.
         let cutoff = TAPE_LP_MAX_HZ - drive.clamp(0.0, 1.0) * (TAPE_LP_MAX_HZ - TAPE_LP_MIN_HZ);
         let rc = 1.0 / (std::f32::consts::TAU * cutoff);
-        let dt = 1.0 / self.sample_rate;
+        let dt = self.sample_period;
         let alpha = dt / (rc + dt);
         self.tape_lp_z += alpha * (fx_raw - self.tape_lp_z);
         self.tape_lp_z = flush_denormal(self.tape_lp_z);

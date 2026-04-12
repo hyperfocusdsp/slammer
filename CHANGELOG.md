@@ -2,6 +2,36 @@
 
 All notable changes to Slammer are documented here.
 
+## [0.4.0] — 2026-04-12
+
+### New features
+
+- **DJ Filter** — bipolar master HP/LP state-variable filter (12 dB/oct, zero-delay
+  feedback SVF). The FILT knob is bipolar: center = off, left sweeps a high-pass from
+  800 Hz down to 20 Hz, right sweeps a low-pass from 20 kHz down to 200 Hz. RES knob
+  (0–1). PRE/POST LED toggle places the filter before or after the master bus
+  (compressor + transformer + limiter + tube warmth).
+- **METAL** — ring modulation on the TOP click voice using the 909 hat partial ratio
+  (1 + √2 ≈ 2.414). Adds inharmonic metallic overtones to the click transient without
+  affecting the SUB or MID layers. Bit-identical bypass at zero.
+- **DICE** — randomize button with six per-section lock LEDs (S M T X E C for SUB /
+  MID / TOP / SAT / EQ / COMP). Roll all unlocked sections at once; values are
+  range-safe via the parameter API. Global envelope params (DECAY, DRIFT) always
+  randomize regardless of locks.
+- **Logo** — Slammer wordmark in the plugin header.
+
+### Fixes
+
+- **Knob double-click reset now works** in all hosts/platforms. `response.double_clicked()`
+  is unreliable under baseview (raw mouse events, no synthesised egui input). Replaced
+  with manual per-widget timestamp tracking — delta < 0.35 s triggers the reset.
+- **DECAY + DRIFT now always randomize** with DICE. Previously they were gated behind
+  the SUB lock even though they affect all three layers.
+- **Duplicate randomization step removed** — `mid_phase_offset` was being randomized
+  twice per DICE roll (second call overwrote the first with a different value).
+- **Saturation clip LP coefficient** is now precomputed at initialisation rather than
+  recomputed on every sample. No audible change; measurable CPU reduction in Clip mode.
+
 ## [0.2.1] — 2026-04-06
 
 First public release.

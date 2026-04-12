@@ -10,13 +10,19 @@
 //! Only one `Vec` is ever allocated, in `new()`, sized for the worst case of
 //! 400 ms × 96 kHz. Inside `tick()` nothing allocates.
 
+#[inline]
+fn flush_denormal(x: f32) -> f32 {
+    if x.is_subnormal() { 0.0 } else { x }
+}
+
 pub struct ClapVoice {
-    // SVF bandpass state
-    lp: f32,
-    bp: f32,
-    // Cached SVF coefficients
-    w: f32,
-    damp: f32,
+    // Trapezoidal SVF bandpass state
+    ic1: f32,
+    ic2: f32,
+    // Cached SVF coefficients (trapezoidal)
+    svf_a1: f32,
+    svf_a2: f32,
+    svf_a3: f32,
     // Pre-computed amplitude envelope, indexed by `pos`.
     env: Vec<f32>,
     env_len: usize,
@@ -35,10 +41,11 @@ impl ClapVoice {
 
     pub fn new(sample_rate: f32) -> Self {
         let mut v = Self {
-            lp: 0.0,
-            bp: 0.0,
-            w: 0.0,
-            damp: 0.5,
+            ic1: 0.0,
+            ic2: 0.0,
+            svf_a1: 0.0,
+            svf_a2: 0.0,
+            svf_a3: 0.0,
             env: vec![0.0; Self::MAX_ENV_SAMPLES],
             env_len: 0,
             pos: Self::MAX_ENV_SAMPLES, // inactive until triggered
@@ -65,11 +72,15 @@ impl ClapVoice {
     }
 
     fn regenerate(&mut self, sample_rate: f32, freq: f32, tail_ms: f32) {
-        // SVF bandpass coeffs. Narrow-ish Q so the clap has a defined
-        // tonal center but still feels noise-y (Q ~= 1.8).
-        let f0 = (freq / sample_rate).clamp(1e-4, 0.45);
-        self.w = 2.0 * (std::f32::consts::PI * f0).sin();
-        self.damp = 1.0 / 1.8;
+        // Trapezoidal SVF bandpass coeffs (Cytomic/Simper — stable at all
+        // frequencies). Q ~= 1.8 for a narrow-ish tonal center.
+        let f0 = (freq / sample_rate).clamp(1e-4, 0.49);
+        let q: f32 = 1.8;
+        let k = 1.0 / q;
+        let g = (std::f32::consts::PI * f0).tan();
+        self.svf_a1 = 1.0 / (1.0 + g * (g + k));
+        self.svf_a2 = g * self.svf_a1;
+        self.svf_a3 = g * self.svf_a2;
 
         // Envelope timeline (in samples)
         let burst_gap_ms = 10.0;
@@ -123,8 +134,8 @@ impl ClapVoice {
 
     pub fn trigger(&mut self) {
         self.pos = 0;
-        self.lp = 0.0;
-        self.bp = 0.0;
+        self.ic1 = 0.0;
+        self.ic2 = 0.0;
         // Fresh RNG seed per trigger keeps each clap slightly different
         // without sounding random — xorshift32 is deterministic from seed.
         self.rng = self.rng.wrapping_add(0x9E37_79B9);
@@ -148,11 +159,13 @@ impl ClapVoice {
             return 0.0;
         }
         let n = self.noise_sample();
-        // 2-pole SVF bandpass: one sample step
-        self.lp += self.w * self.bp;
-        let hp = n - self.lp - self.damp * self.bp;
-        self.bp += self.w * hp;
-        let out = self.bp * self.env[self.pos];
+        // Trapezoidal SVF bandpass: one sample step
+        let v3 = n - self.ic2;
+        let v1 = self.svf_a1 * self.ic1 + self.svf_a2 * v3;
+        let v2 = self.ic2 + self.svf_a2 * self.ic1 + self.svf_a3 * v3;
+        self.ic1 = flush_denormal(2.0 * v1 - self.ic1);
+        self.ic2 = flush_denormal(2.0 * v2 - self.ic2);
+        let out = v1 * self.env[self.pos]; // v1 = bandpass
         self.pos += 1;
         out
     }

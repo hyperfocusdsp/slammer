@@ -17,8 +17,6 @@ use crate::ui::widgets::{
 };
 
 pub const BASE_W: f32 = 680.0;
-#[allow(dead_code)]
-pub const BASE_H: f32 = 444.0;
 pub const KNOB_SIZE: f32 = 32.0;
 pub const KNOB_SPACING: f32 = 52.0;
 pub const RACK_EAR_W: f32 = 16.0;
@@ -88,14 +86,8 @@ pub fn draw_chrome(ui: &egui::Ui, panel_rect: egui::Rect) -> f32 {
         screw_r,
     );
 
-    // Title text + power LED
-    painter.text(
-        egui::pos2(panel_rect.left() + CONTENT_LEFT, header_center_y),
-        egui::Align2::LEFT_CENTER,
-        "SLAMMER",
-        egui::FontId::new(16.0, egui::FontFamily::Monospace),
-        theme::WHITE,
-    );
+    // Title logo is painted by the editor (texture handle lives there).
+    // Power LED stays here.
     draw_led(
         painter,
         panel_rect.left() + CONTENT_LEFT + 120.0,
@@ -157,7 +149,7 @@ pub fn test_button(ui: &mut egui::Ui, panel_rect: egui::Rect, header_center_y: f
             btn_rect.center(),
             egui::Align2::CENTER_CENTER,
             "TEST",
-            egui::FontId::new(12.0, egui::FontFamily::Monospace),
+            egui::FontId::new(10.8, egui::FontFamily::Monospace),
             theme::WHITE,
         );
     }
@@ -297,7 +289,7 @@ impl<'a> MasterRow<'a> {
         let knobs_x = self.wf_left + self.wf_width + 16.0;
         let master_knob_rect = egui::Rect::from_min_size(
             egui::pos2(knobs_x, knob_row_y),
-            egui::vec2(KNOB_SPACING * 4.0, KNOB_SIZE + 30.0),
+            egui::vec2(KNOB_SPACING * 3.0, KNOB_SIZE + 30.0),
         );
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(master_knob_rect), |ui| {
             ui.horizontal(|ui| {
@@ -312,7 +304,7 @@ impl<'a> MasterRow<'a> {
                     400.0,
                     |v| format!("{v:.0}ms"),
                     KNOB_SIZE,
-                    theme::KNOB_METAL,
+                    theme::SECTION_MASTER,
                 );
                 param_knob(
                     ui,
@@ -325,20 +317,7 @@ impl<'a> MasterRow<'a> {
                     0.0,
                     |v| format!("{:.0}%", v * 100.0),
                     KNOB_SIZE,
-                    theme::KNOB_METAL,
-                );
-                param_knob(
-                    ui,
-                    setter,
-                    "vel",
-                    "VEL",
-                    &params.velocity_sens,
-                    0.0,
-                    1.0,
-                    0.8,
-                    |v| format!("{:.0}%", v * 100.0),
-                    KNOB_SIZE,
-                    theme::KNOB_METAL,
+                    theme::SECTION_MASTER,
                 );
                 // Master volume is stored as gain and displayed in dB.
                 let mut vol_db = util::gain_to_db(params.master_volume.value());
@@ -358,7 +337,7 @@ impl<'a> MasterRow<'a> {
                         }
                     },
                     KNOB_SIZE,
-                    theme::KNOB_METAL,
+                    theme::SECTION_MASTER,
                 );
                 if resp.changed {
                     setter.begin_set_parameter(&params.master_volume);
@@ -372,7 +351,7 @@ impl<'a> MasterRow<'a> {
         // Occupies the free ~100 px slot at the far right of the master row.
         // Three macro knobs (AMT / REACT / DRIVE) + a clickable LIM LED.
         {
-            let strip_x = knobs_x + KNOB_SPACING * 4.0 + 4.0;
+            let strip_x = knobs_x + KNOB_SPACING * 3.0 + 4.0;
             let strip_right = panel_rect.right() - CONTENT_LEFT;
             let strip_w = (strip_right - strip_x).max(0.0);
             if strip_w >= 80.0 {
@@ -510,7 +489,7 @@ pub fn draw_sub_top_row(
     let row_label_y = master_bottom_y + 8.0;
     let row_groove_y = row_label_y + 14.0;
     let row_knob_y = row_groove_y + 4.0;
-    let divider_x = panel_rect.left() + CONTENT_LEFT + KNOB_SPACING * 6.0 - 6.0;
+    let divider_x = panel_rect.left() + CONTENT_LEFT + KNOB_SPACING * 5.0 - 6.0;
 
     {
         let painter = ui.painter();
@@ -523,7 +502,7 @@ pub fn draw_sub_top_row(
         );
         painter.text(
             egui::pos2(
-                panel_rect.left() + CONTENT_LEFT + KNOB_SPACING * 6.0,
+                panel_rect.left() + CONTENT_LEFT + KNOB_SPACING * 5.0,
                 row_label_y,
             ),
             egui::Align2::LEFT_TOP,
@@ -549,7 +528,7 @@ pub fn draw_sub_top_row(
     // SUB knobs
     let sub_knob_rect = egui::Rect::from_min_size(
         egui::pos2(panel_rect.left() + CONTENT_LEFT, row_knob_y),
-        egui::vec2(KNOB_SPACING * 6.0, KNOB_SIZE + 30.0),
+        egui::vec2(KNOB_SPACING * 5.0, KNOB_SIZE + 30.0),
     );
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(sub_knob_rect), |ui| {
         ui.horizontal(|ui| {
@@ -618,29 +597,16 @@ pub fn draw_sub_top_row(
                 KNOB_SIZE,
                 theme::SECTION_SUB,
             );
-            param_knob(
-                ui,
-                setter,
-                "s_ph",
-                "PHASE",
-                &params.sub_phase_offset,
-                0.0,
-                360.0,
-                90.0,
-                |v| format!("{v:.0}\u{00b0}"),
-                KNOB_SIZE,
-                theme::SECTION_SUB,
-            );
         });
     });
 
     // TOP knobs
     let top_knob_rect = egui::Rect::from_min_size(
         egui::pos2(
-            panel_rect.left() + CONTENT_LEFT + KNOB_SPACING * 6.0,
+            panel_rect.left() + CONTENT_LEFT + KNOB_SPACING * 5.0,
             row_knob_y,
         ),
-        egui::vec2(KNOB_SPACING * 4.0, KNOB_SIZE + 30.0),
+        egui::vec2(KNOB_SPACING * 5.0, KNOB_SIZE + 30.0),
     );
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(top_knob_rect), |ui| {
         ui.horizontal(|ui| {
@@ -696,6 +662,19 @@ pub fn draw_sub_top_row(
                 KNOB_SIZE,
                 theme::SECTION_TOP,
             );
+            param_knob(
+                ui,
+                setter,
+                "t_mt",
+                "METAL",
+                &params.top_metal,
+                0.0,
+                1.0,
+                0.0,
+                |v| format!("{:.0}%", v * 100.0),
+                KNOB_SIZE,
+                theme::SECTION_TOP,
+            );
         });
     });
 
@@ -709,8 +688,8 @@ pub fn draw_sub_top_row(
         let small_knob = 18.0f32;
         // Match the COMP strip's x so the three clusters stack visually.
         let col_x = panel_rect.right() - CONTENT_LEFT - 96.0 + 4.0;
-        let col_label_y = row_label_y;
-        let col_row_y = row_knob_y - 2.0;
+        let col_label_y = row_label_y + 6.0;
+        let col_row_y = row_knob_y + 4.0;
 
         ui.painter().text(
             egui::pos2(col_x, col_label_y),
@@ -812,7 +791,7 @@ pub fn draw_mid_row(
 
     let mid_knob_rect = egui::Rect::from_min_size(
         egui::pos2(panel_rect.left() + CONTENT_LEFT, row_knob_y),
-        egui::vec2(KNOB_SPACING * 9.0, KNOB_SIZE + 30.0),
+        egui::vec2(KNOB_SPACING * 10.0, KNOB_SIZE + 30.0),
     );
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(mid_knob_rect), |ui| {
         ui.horizontal(|ui| {
@@ -933,6 +912,19 @@ pub fn draw_mid_row(
                 KNOB_SIZE,
                 theme::SECTION_MID,
             );
+            param_knob(
+                ui,
+                setter,
+                "m_ph",
+                "PHASE",
+                &params.mid_phase_offset,
+                0.0,
+                360.0,
+                0.0,
+                |v| format!("{v:.0}\u{00b0}"),
+                KNOB_SIZE,
+                theme::SECTION_MID,
+            );
         });
     });
 
@@ -1036,11 +1028,9 @@ pub fn draw_mid_row(
 
 /// Draw the SAT | EQ row. Returns the bottom y of the row.
 /// Result of drawing the SAT/EQ row. `next_y` is where the following row
-/// should start; `bounce_clicked` reports whether the user clicked BOUNCE
-/// this frame so the caller can kick off a one-shot export.
+/// should start.
 pub struct SatEqRowResult {
     pub next_y: f32,
-    pub bounce_clicked: bool,
 }
 
 pub fn draw_sat_eq_row(
@@ -1204,25 +1194,19 @@ pub fn draw_sat_eq_row(
     // one trigger of the current sound to disk as WAV/AIFF; the actual
     // render + file write is handled by `crate::export::export_one_shot`
     // in `editor.rs` when the click flag returned here is set.
-    let bounce_clicked = draw_bounce_button(ui, panel_rect, row_knob_y);
-
     SatEqRowResult {
         next_y: row_knob_y + KNOB_SIZE + 30.0,
-        bounce_clicked,
     }
 }
 
 /// Beveled "BOUNCE" button in the right gap of the SAT/EQ row. Styled to
 /// match [`test_button`] so it reads as part of the same visual family.
 /// Returns `true` on the frame the user clicks it.
-fn draw_bounce_button(ui: &mut egui::Ui, panel_rect: egui::Rect, row_knob_y: f32) -> bool {
+pub fn draw_bounce_button(ui: &mut egui::Ui, panel_rect: egui::Rect, top_y: f32) -> bool {
     let btn_w = 56.0;
-    let btn_h = 22.0;
-    // Right-align with a small inset so the button doesn't kiss the rack ear.
+    let btn_h = 18.0;
     let btn_x = panel_rect.right() - CONTENT_LEFT - btn_w;
-    // Vertically centered on the knob row (same as the knob caps).
-    let btn_y = row_knob_y + (KNOB_SIZE - btn_h) * 0.5 + 4.0;
-    let btn_rect = egui::Rect::from_min_size(egui::pos2(btn_x, btn_y), egui::vec2(btn_w, btn_h));
+    let btn_rect = egui::Rect::from_min_size(egui::pos2(btn_x, top_y), egui::vec2(btn_w, btn_h));
 
     let resp = ui.interact(
         btn_rect,
@@ -1252,16 +1236,8 @@ fn draw_bounce_button(ui: &mut egui::Ui, panel_rect: egui::Rect, row_knob_y: f32
             btn_rect.center(),
             egui::Align2::CENTER_CENTER,
             "BOUNCE",
-            egui::FontId::new(11.0, egui::FontFamily::Monospace),
+            egui::FontId::new(10.0, egui::FontFamily::Monospace),
             theme::WHITE,
-        );
-        // Small label underneath so users know what it does at a glance.
-        painter.text(
-            egui::pos2(btn_rect.center().x, btn_rect.bottom() + 2.0),
-            egui::Align2::CENTER_TOP,
-            "EXPORT",
-            egui::FontId::new(6.0, egui::FontFamily::Monospace),
-            theme::TEXT_DIM,
         );
     }
     let clicked = resp.clicked();
@@ -1269,6 +1245,202 @@ fn draw_bounce_button(ui: &mut egui::Ui, panel_rect: egui::Rect, row_knob_y: f32
         resp.on_hover_text_at_pointer("Export one hit to WAV/AIFF");
     }
     clicked
+}
+
+pub fn draw_filter_cluster(
+    ui: &mut egui::Ui,
+    setter: &ParamSetter,
+    params: &SlammerParams,
+    panel_rect: egui::Rect,
+    top_y: f32,
+) {
+    let col_x = panel_rect.right() - CONTENT_LEFT - 96.0 + 4.0;
+    let small_knob = 18.0f32;
+
+    ui.painter().text(
+        egui::pos2(col_x, top_y),
+        egui::Align2::LEFT_TOP,
+        "FILTER",
+        egui::FontId::new(9.0, egui::FontFamily::Monospace),
+        theme::TEXT_DIM,
+    );
+
+    let led_x = col_x + 52.0;
+    let led_y = top_y + 2.0;
+    let pre_on = params.dj_filter_pre.value();
+    let led_label = if pre_on { "PRE" } else { "POST" };
+    let led_color = if pre_on {
+        theme::RED_WAVEFORM
+    } else {
+        theme::TEXT_DIM
+    };
+    let led_rect = egui::Rect::from_min_size(
+        egui::pos2(led_x, led_y),
+        egui::vec2(32.0, 10.0),
+    );
+    let led_resp = ui.interact(
+        led_rect,
+        egui::Id::new("dj_filter_pre_led"),
+        egui::Sense::click(),
+    );
+    if led_resp.clicked() {
+        setter.begin_set_parameter(&params.dj_filter_pre);
+        setter.set_parameter(&params.dj_filter_pre, !pre_on);
+        setter.end_set_parameter(&params.dj_filter_pre);
+    }
+    draw_led(ui.painter(), led_x + 2.0, led_y + 4.0, pre_on);
+    ui.painter().text(
+        egui::pos2(led_x + 12.0, led_y),
+        egui::Align2::LEFT_TOP,
+        led_label,
+        egui::FontId::new(8.0, egui::FontFamily::Monospace),
+        led_color,
+    );
+
+    let knob_y = top_y + 14.0;
+    let knob_cell_w = small_knob + 10.0;
+    let row_w = knob_cell_w * 2.0 + 6.0;
+    let knob_rect = egui::Rect::from_min_size(
+        egui::pos2(col_x, knob_y),
+        egui::vec2(row_w, small_knob + 22.0),
+    );
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(knob_rect), |ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        ui.horizontal(|ui| {
+            let mut filt_val = params.dj_filter_pos.value();
+            let resp = knob::knob(
+                ui,
+                egui::Id::new("dj_filter_pos"),
+                &mut filt_val,
+                -1.0,
+                1.0,
+                0.0,
+                "FILT",
+                |v| {
+                    if v.abs() < 0.001 {
+                        "OFF".into()
+                    } else {
+                        let t = v.abs();
+                        let freq = if v > 0.0 {
+                            20.0 * (800.0f32 / 20.0).powf(t)
+                        } else {
+                            20000.0 * (200.0f32 / 20000.0).powf(t)
+                        };
+                        let prefix = if v > 0.0 { "HP" } else { "LP" };
+                        if freq >= 1000.0 {
+                            format!("{prefix}{:.1}k", freq / 1000.0)
+                        } else {
+                            format!("{prefix}{freq:.0}")
+                        }
+                    }
+                },
+                small_knob,
+                theme::KNOB_METAL,
+            );
+            if resp.changed {
+                setter.begin_set_parameter(&params.dj_filter_pos);
+                setter.set_parameter(&params.dj_filter_pos, filt_val);
+                setter.end_set_parameter(&params.dj_filter_pos);
+            }
+
+            param_knob(
+                ui,
+                setter,
+                "dj_filt_res",
+                "RES",
+                &params.dj_filter_res,
+                0.0,
+                1.0,
+                0.0,
+                |v| format!("{:.0}%", v * 100.0),
+                small_knob,
+                theme::KNOB_METAL,
+            );
+        });
+    });
+}
+
+pub fn draw_dice_row(
+    ui: &mut egui::Ui,
+    panel_rect: egui::Rect,
+    top_y: f32,
+    locks: &std::sync::atomic::AtomicU8,
+) -> bool {
+    let col_x = panel_rect.right() - CONTENT_LEFT - 96.0 + 4.0;
+
+    let btn_w = 32.0;
+    let btn_h = 16.0;
+    let btn_rect = egui::Rect::from_min_size(
+        egui::pos2(col_x, top_y),
+        egui::vec2(btn_w, btn_h),
+    );
+    let resp = ui.interact(btn_rect, egui::Id::new("dice_btn"), egui::Sense::click());
+    let pressed = resp.is_pointer_button_down_on();
+    {
+        let painter = ui.painter();
+        let top_color = if pressed { theme::BTN_DARK } else { theme::BTN_LIGHT };
+        let bot_color = if pressed { theme::BTN_LIGHT } else { theme::BTN_DARK };
+        painter.rect_filled(btn_rect, 2.0, bot_color);
+        painter.rect_filled(
+            egui::Rect::from_min_size(btn_rect.min, egui::vec2(btn_w, btn_h * 0.5)),
+            2.0,
+            top_color,
+        );
+        painter.text(
+            btn_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "DICE",
+            egui::FontId::new(8.0, egui::FontFamily::Monospace),
+            theme::WHITE,
+        );
+    }
+    let dice_clicked = resp.clicked();
+
+    let labels = ["S", "M", "T", "X", "E", "C"];
+    let current_locks = locks.load(std::sync::atomic::Ordering::Relaxed);
+    let led_start_x = col_x + btn_w + 4.0;
+    let led_spacing = 9.0;
+
+    for (i, label) in labels.iter().enumerate() {
+        let bit = 1u8 << i;
+        let is_locked = current_locks & bit != 0;
+        let lx = led_start_x + i as f32 * led_spacing;
+        let ly = top_y + 2.0;
+
+        let led_rect = egui::Rect::from_min_size(
+            egui::pos2(lx - 1.0, ly - 1.0),
+            egui::vec2(led_spacing, btn_h),
+        );
+        let led_resp = ui.interact(
+            led_rect,
+            egui::Id::new(("dice_lock", i)),
+            egui::Sense::click(),
+        );
+        if led_resp.clicked() {
+            locks.fetch_xor(bit, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        let dot_color = if is_locked {
+            theme::RED_WAVEFORM
+        } else {
+            egui::Color32::from_rgb(0x33, 0x22, 0x22)
+        };
+        ui.painter().circle_filled(
+            egui::pos2(lx + 3.0, ly + 2.0),
+            2.5,
+            dot_color,
+        );
+
+        ui.painter().text(
+            egui::pos2(lx + 3.0, ly + 7.0),
+            egui::Align2::CENTER_TOP,
+            *label,
+            egui::FontId::new(6.0, egui::FontFamily::Monospace),
+            if is_locked { theme::WHITE } else { theme::TEXT_DIM },
+        );
+    }
+
+    dice_clicked
 }
 
 /// UI-thread state for the tempo readout's interactive widget. Only
@@ -1728,7 +1900,7 @@ pub fn draw_sequencer_row(
     }
 }
 
-/// Draw the bottom footer groove and the "REXIST INSTRUMENTS" brand text.
+/// Draw the bottom footer groove.
 pub fn draw_footer(ui: &egui::Ui, panel_rect: egui::Rect) {
     let painter = ui.painter();
     let footer_groove_y = panel_rect.bottom() - 22.0;
@@ -1737,12 +1909,5 @@ pub fn draw_footer(ui: &egui::Ui, panel_rect: egui::Rect) {
         panel_rect.left() + CONTENT_LEFT - 4.0,
         panel_rect.right() - CONTENT_LEFT + 4.0,
         footer_groove_y,
-    );
-    painter.text(
-        egui::pos2(panel_rect.right() - CONTENT_LEFT, panel_rect.bottom() - 6.0),
-        egui::Align2::RIGHT_BOTTOM,
-        "REXIST INSTRUMENTS",
-        egui::FontId::new(7.0, egui::FontFamily::Monospace),
-        theme::TEXT_GHOST,
     );
 }

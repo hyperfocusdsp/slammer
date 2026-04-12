@@ -124,10 +124,6 @@ impl PresetBar {
         let selected_name = self.state.selected_name.clone();
         let is_editing = self.state.editing;
         let dropdown_open = self.state.dropdown_open;
-        let is_factory = self
-            .cached
-            .iter()
-            .any(|e| e.is_factory && e.name == selected_name);
 
         // --- Left arrow ---
         let left_rect = egui::Rect::from_min_size(
@@ -261,7 +257,6 @@ impl PresetBar {
         // `PresetManager::delete`; "Init" stays listed because it's
         // defined in the factory set and will reappear if the hidden
         // entry is cleared (e.g. by saving under that name).
-        let _ = is_factory;
         let can_delete = !self.cached.is_empty();
         let del_resp = ui.interact(del_rect, egui::Id::new("preset_del"), egui::Sense::click());
         draw_3d_button(
@@ -352,23 +347,20 @@ impl PresetBar {
         }
         let mut edit_buf = self.state.edit_buffer.clone();
         let input_rect = led_rect.shrink(2.0);
-        let te_resp = ui
-            .allocate_new_ui(egui::UiBuilder::new().max_rect(input_rect), |ui| {
-                let te = egui::TextEdit::singleline(&mut edit_buf)
-                    .font(egui::FontId::new(
-                        11.0,
-                        egui::FontFamily::Name(theme::FONT_DIGITAL.into()),
-                    ))
-                    .text_color(theme::RED_LED)
-                    .frame(false)
-                    .desired_width(input_rect.width());
-                let resp = ui.add(te);
-                if !resp.has_focus() {
-                    resp.request_focus();
-                }
-                resp
-            })
-            .inner;
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(input_rect), |ui| {
+            let te = egui::TextEdit::singleline(&mut edit_buf)
+                .font(egui::FontId::new(
+                    11.0,
+                    egui::FontFamily::Name(theme::FONT_DIGITAL.into()),
+                ))
+                .text_color(theme::RED_LED)
+                .frame(false)
+                .desired_width(input_rect.width());
+            let resp = ui.add(te);
+            if !resp.has_focus() {
+                resp.request_focus();
+            }
+        });
 
         self.state.edit_buffer = edit_buf.clone();
 
@@ -376,9 +368,8 @@ impl PresetBar {
         // button so both entry points behave identically. We check the
         // Enter key unconditionally (not gated on `lost_focus()`) because
         // the focus-request step above re-steals focus in the same frame
-        // the TextEdit tried to release it, which made the old
-        // `lost_focus() && Enter` check fire inconsistently.
-        let _ = te_resp;
+        // We check the Enter key unconditionally (not gated on lost_focus())
+        // to avoid focus-juggling quirks in baseview.
         let (enter_pressed, esc_pressed) = ui.input(|i| {
             (
                 i.key_pressed(egui::Key::Enter),
@@ -580,7 +571,7 @@ fn draw_3d_button(painter: &egui::Painter, rect: egui::Rect, label: &str, presse
         rect.center(),
         egui::Align2::CENTER_CENTER,
         label,
-        egui::FontId::new(11.0, egui::FontFamily::Monospace),
+        egui::FontId::new(10.0, egui::FontFamily::Monospace),
         theme::WHITE,
     );
 }
