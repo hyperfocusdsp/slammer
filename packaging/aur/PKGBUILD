@@ -1,6 +1,6 @@
 # Maintainer: Hornfisk <hornfisk@users.noreply.github.com>
 pkgname=slammer
-pkgver=0.3.0
+pkgver=0.4.0
 pkgrel=1
 pkgdesc="Three-layer synthesized kick drum plugin (VST3, CLAP, Standalone)"
 arch=('x86_64')
@@ -13,7 +13,7 @@ optdepends=(
 )
 provides=('slammer-vst3' 'slammer-clap' 'slammer-standalone')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/Hornfisk/slammer/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('4ce2dc5592f8043d80be79818ecc36031fd530cb4b24ed5d920af547e19a7178')
+sha256sums=('SKIP')
 
 prepare() {
   cd "$pkgname-$pkgver"
