@@ -16,7 +16,6 @@ use crate::ui::widgets::{
     draw_groove, draw_inset_display, draw_led, draw_rack_ear, draw_screw, param_knob,
 };
 
-pub const BASE_W: f32 = 680.0;
 pub const KNOB_SIZE: f32 = 32.0;
 pub const KNOB_SPACING: f32 = 52.0;
 pub const RACK_EAR_W: f32 = 16.0;
@@ -401,9 +400,12 @@ impl<'a> MasterRow<'a> {
                 }
 
                 // Three macro knobs, laid out in a tight horizontal row.
-                let small_knob = 20.0f32;
-                let knob_cell_w = small_knob + 12.0;
-                let row_w = knob_cell_w * 3.0 + 4.0;
+                // Sized to match the PRECISE strip directly below so the two
+                // clusters read as a vertical pair, not as two unrelated
+                // groups with different metrics.
+                let small_knob = 18.0f32;
+                let knob_cell_w = small_knob + 10.0;
+                let row_w = knob_cell_w * 3.0 + 6.0;
                 let row_x = strip_x + ((strip_w - row_w) * 0.5).max(4.0);
                 let row_y = self.master_y + 14.0;
                 let comp_rect = egui::Rect::from_min_size(
@@ -1205,7 +1207,12 @@ pub fn draw_sat_eq_row(
 pub fn draw_bounce_button(ui: &mut egui::Ui, panel_rect: egui::Rect, top_y: f32) -> bool {
     let btn_w = 48.0;
     let btn_h = 18.0;
-    let btn_x = panel_rect.right() - CONTENT_LEFT - btn_w;
+    // Right-anchor to the same vertical column as PRECISE / CLAP / FILTER /
+    // DICE so KNE, TAIL, POST, the lock LEDs and BOUNCE all share a clean
+    // right edge. The cluster col_x = panel.right - CONTENT_LEFT - 96 + 4
+    // and PRECISE-style row_w = 90 → right edge sits at col_x + 90.
+    let cluster_right = panel_rect.right() - CONTENT_LEFT - 96.0 + 4.0 + 90.0;
+    let btn_x = cluster_right - btn_w;
     let btn_rect = egui::Rect::from_min_size(egui::pos2(btn_x, top_y), egui::vec2(btn_w, btn_h));
 
     let resp = ui.interact(

@@ -52,6 +52,36 @@ pub fn slammer_hidden_presets_file() -> PathBuf {
     slammer_data_dir().join("hidden_presets.txt")
 }
 
+/// Sidecar file storing the user's UI scale preference (`1.0` / `1.5` / `2.0`).
+/// nih-plug's `#[persist]` round-trips the value within DAW projects, but the
+/// standalone wrapper doesn't reuse that machinery between launches, so we
+/// also serialize the chosen scale to disk and have `slammer-launch` forward
+/// it to the standalone via `--dpi-scale`.
+pub fn slammer_ui_scale_file() -> PathBuf {
+    slammer_data_dir().join("ui_scale.txt")
+}
+
+/// Read the persisted UI scale. Returns `1.0` if the file is missing, the
+/// contents are unparseable, or the value falls outside the supported
+/// `[1.0, 2.0]` range.
+pub fn load_ui_scale() -> f32 {
+    std::fs::read_to_string(slammer_ui_scale_file())
+        .ok()
+        .and_then(|s| s.trim().parse::<f32>().ok())
+        .map(|v| v.clamp(1.0, 2.0))
+        .unwrap_or(1.0)
+}
+
+/// Persist the UI scale to disk. Silently ignores IO failures — losing a
+/// preference is never worth a panic on the GUI thread.
+pub fn save_ui_scale(scale: f32) {
+    let path = slammer_ui_scale_file();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, format!("{scale}\n"));
+}
+
 fn fallback_dir() -> PathBuf {
     std::env::temp_dir().join("slammer")
 }

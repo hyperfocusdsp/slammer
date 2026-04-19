@@ -101,6 +101,15 @@ pub struct SlammerParams {
     #[persist = "seq_steps"]
     pub seq_steps: Arc<Mutex<u16>>,
 
+    /// Editor display scale: `1.0`, `1.5`, or `2.0`. The footer "UI N×"
+    /// badge cycles this value and mirrors it to a sidecar file (see
+    /// `util::paths::save_ui_scale`). nih-plug serialises it inside DAW
+    /// projects via `#[persist]`; the standalone wrapper reads the
+    /// sidecar at launch and forwards it as `--dpi-scale` so the
+    /// next-opened window comes up at the requested size.
+    #[persist = "ui-scale-v1"]
+    pub ui_scale: Arc<Mutex<f32>>,
+
     #[id = "master_vol"]
     pub master_volume: FloatParam,
 
@@ -314,10 +323,20 @@ pub fn collect_kick_params(p: &SlammerParams) -> KickParams {
 
 impl Default for SlammerParams {
     fn default() -> Self {
+        // EguiState size is the LOGICAL window size. Actual on-screen scaling
+        // is applied by baseview's WindowScalePolicy — for standalone the
+        // launcher passes `--dpi-scale N` (read from `ui_scale.txt`); DAW
+        // hosts call `Editor::set_scale_factor`. Multiplying the logical
+        // size by the scale here would double-scale (window grows, content
+        // doesn't). Mirrors the squelchbox approach.
+        let ui_scale = crate::util::paths::load_ui_scale();
+
         Self {
-            editor_state: EguiState::from_size(680, 444), // matches BASE_W x BASE_H (1:1 default)
+            editor_state: EguiState::from_size(680, 444),
 
             seq_steps: Arc::new(Mutex::new(DEFAULT_STEP_BITS)),
+
+            ui_scale: Arc::new(Mutex::new(ui_scale)),
 
             master_volume: db_knob("Master Volume", 0.0, -60.0, 6.0),
 

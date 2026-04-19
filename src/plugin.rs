@@ -88,9 +88,9 @@ impl Default for Slammer {
 
 impl Plugin for Slammer {
     const NAME: &'static str = "Slammer";
-    const VENDOR: &'static str = "REXIST";
-    const URL: &'static str = "";
-    const EMAIL: &'static str = "";
+    const VENDOR: &'static str = "Hyperfocus DSP";
+    const URL: &'static str = "https://hyperfocusdsp.com";
+    const EMAIL: &'static str = "hello@hyperfocusdsp.com";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
@@ -403,10 +403,10 @@ impl Plugin for Slammer {
 }
 
 impl ClapPlugin for Slammer {
-    const CLAP_ID: &'static str = "com.rexist.slammer";
+    const CLAP_ID: &'static str = "com.hyperfocusdsp.slammer";
     const CLAP_DESCRIPTION: Option<&'static str> = Some("Kick drum synthesizer");
-    const CLAP_MANUAL_URL: Option<&'static str> = None;
-    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+    const CLAP_MANUAL_URL: Option<&'static str> = Some("https://hyperfocusdsp.com/slammer");
+    const CLAP_SUPPORT_URL: Option<&'static str> = Some("https://hyperfocusdsp.com/support");
     const CLAP_FEATURES: &'static [ClapFeature] = &[
         ClapFeature::Instrument,
         ClapFeature::Synthesizer,
@@ -415,6 +415,8 @@ impl ClapPlugin for Slammer {
 }
 
 impl Vst3Plugin for Slammer {
+    // Unchanged from v0.4.x to preserve DAW-project compatibility — class ID
+    // is the host-side identity for project recall and is not user-visible.
     const VST3_CLASS_ID: [u8; 16] = *b"SlammerKickSy01\0";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
         Vst3SubCategory::Instrument,

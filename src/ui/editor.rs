@@ -15,7 +15,7 @@ use crate::export::{self, ExportOutcome};
 use crate::params::SlammerParams;
 use crate::presets::PresetManager;
 use crate::sequencer::Sequencer;
-use crate::ui::panels::{self, BASE_W, CONTENT_LEFT, KNOB_SPACING};
+use crate::ui::panels::{self, CONTENT_LEFT, KNOB_SPACING};
 use crate::ui::preset_bar::PresetBar;
 use crate::ui::theme;
 use crate::util::messages::UiToDsp;
@@ -74,6 +74,10 @@ pub fn create(
 
     // Header logo texture, lazily uploaded on first paint.
     let logo_texture: Arc<Mutex<Option<egui::TextureHandle>>> = Arc::new(Mutex::new(None));
+    // Footer "manufacturer mark" (Hyperfocus DSP wordmark) — same lazy
+    // upload pattern as the header logo, separate handle so each can be
+    // sized independently if needed.
+    let hf_logo_texture: Arc<Mutex<Option<egui::TextureHandle>>> = Arc::new(Mutex::new(None));
     let dice_locks = Arc::new(std::sync::atomic::AtomicU8::new(0));
 
     create_egui_editor(
@@ -84,11 +88,12 @@ pub fn create(
             theme::setup_style(ctx);
         },
         move |ctx, setter, _state| {
-            // Aspect-ratio-locked scaling: layout is done at BASE_W logical
-            // pixels and egui upscales to fill whatever window the host gave us.
-            let (win_w, _) = editor_state_clone.size();
-            let ppp = (win_w as f32 / BASE_W).max(1.0);
-            ctx.set_pixels_per_point(ppp);
+            // Scaling is handled outside this callback: baseview applies the
+            // window scale factor (standalone via `--dpi-scale`, DAW via
+            // `Editor::set_scale_factor`), and egui's `pixels_per_point`
+            // follows. We do NOT call `ctx.set_pixels_per_point()` here —
+            // that fights baseview and double-scales the layout.
+            let _ = &editor_state_clone;
 
             // Drain audio-thread telemetry into the waveform ring.
             drain_telemetry(&telemetry, &waveform);
@@ -161,6 +166,66 @@ pub fn create(
                                     egui::pos2(1.0, 1.0),
                                 ),
                                 theme::WHITE,
+                            );
+                        }
+                    }
+
+                    // UI scale badge — discreet click-to-cycle, lives in the
+                    // header to the left of "KICK SYNTHESIZER" so the footer
+                    // chrome stays clean. Mirrors the SquelchBox `band1.rs`
+                    // pattern; the new value is mirrored to a sidecar file so
+                    // `slammer-launch` can forward it as `--dpi-scale` on the
+                    // next standalone launch (DAWs honour `#[persist]` directly).
+                    {
+                        let scale = *params.ui_scale.lock();
+                        let scale_text = if (scale - scale.round()).abs() < 0.05 {
+                            format!("UI {:.0}×", scale)
+                        } else {
+                            format!("UI {:.1}×", scale)
+                        };
+                        // KICK SYNTHESIZER is right-aligned at right-CONTENT_LEFT
+                        // and ~80px wide at 8pt mono; clear it by ~14px.
+                        let badge_right = panel_rect.right() - CONTENT_LEFT - 94.0;
+                        let badge_w = 50.0;
+                        let badge_h = 14.0;
+                        let hit = egui::Rect::from_min_size(
+                            egui::pos2(badge_right - badge_w, header_center_y - badge_h * 0.5),
+                            egui::vec2(badge_w, badge_h),
+                        );
+                        let resp = ui
+                            .interact(
+                                hit,
+                                egui::Id::new("ui_scale_btn"),
+                                egui::Sense::click(),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(
+                                "UI scale — click to cycle (1× / 1.5× / 2×).\n\
+                                 Reopen the plugin (or restart slammer) to apply.",
+                            );
+                        let color = if resp.hovered() {
+                            theme::WHITE
+                        } else {
+                            theme::TEXT_DIM
+                        };
+                        ui.painter().text(
+                            egui::pos2(badge_right, header_center_y),
+                            egui::Align2::RIGHT_CENTER,
+                            &scale_text,
+                            egui::FontId::new(8.0, egui::FontFamily::Monospace),
+                            color,
+                        );
+                        if resp.clicked() {
+                            let mut lock = params.ui_scale.lock();
+                            let next = match *lock {
+                                v if v < 1.25 => 1.5,
+                                v if v < 1.75 => 2.0,
+                                _ => 1.0,
+                            };
+                            *lock = next;
+                            crate::util::paths::save_ui_scale(next);
+                            tracing::info!(
+                                "[ui_scale] cycled → {next}× (saved; reopen plugin to apply)"
                             );
                         }
                     }
@@ -317,6 +382,65 @@ pub fn create(
 
                     // ===== Footer =====
                     panels::draw_footer(ui, panel_rect);
+
+                    // Footer manufacturer mark — full Hyperfocus DSP wordmark
+                    // (with small-caps DSP suffix and ring-as-O) left-aligned
+                    // in the footer strip. Sourced from `wordmark-master.svg`,
+                    // not the no-DSP `wordmark-only.svg` derivative.
+                    {
+                        let mut tex = hf_logo_texture.lock();
+                        if tex.is_none() {
+                            let bytes =
+                                include_bytes!("../../assets/hyperfocus_dsp_logo.png");
+                            if let Ok(img) = image::load_from_memory(bytes) {
+                                let rgba = img.to_rgba8();
+                                let (w, h) = rgba.dimensions();
+                                let pixels = rgba.into_raw();
+                                let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                    [w as usize, h as usize],
+                                    &pixels,
+                                );
+                                *tex = Some(ctx.load_texture(
+                                    "hyperfocus_dsp_logo",
+                                    color_image,
+                                    egui::TextureOptions::LINEAR,
+                                ));
+                            }
+                        }
+                        if let Some(t) = tex.as_ref() {
+                            // Source rendered at 142×24 (rsvg-convert -h 24);
+                            // displaying at 10 px tall is a 2.4× downscale
+                            // that LINEAR handles cleanly without aliasing.
+                            let logo_h = 10.0;
+                            let [tex_w, tex_h] = t.size();
+                            let logo_w = logo_h * (tex_w as f32 / tex_h as f32);
+                            let strip_y = panel_rect.bottom() - 17.0;
+                            let logo_rect = egui::Rect::from_min_size(
+                                egui::pos2(
+                                    panel_rect.left() + CONTENT_LEFT,
+                                    strip_y,
+                                ),
+                                egui::vec2(logo_w, logo_h),
+                            );
+                            ui.painter().image(
+                                t.id(),
+                                logo_rect,
+                                egui::Rect::from_min_max(
+                                    egui::pos2(0.0, 0.0),
+                                    egui::pos2(1.0, 1.0),
+                                ),
+                                theme::WHITE,
+                            );
+                            let logo_resp = ui.interact(
+                                logo_rect,
+                                egui::Id::new("hyperfocus_brand"),
+                                egui::Sense::hover(),
+                            );
+                            if logo_resp.hovered() {
+                                logo_resp.on_hover_text("Made by Hyperfocus DSP");
+                            }
+                        }
+                    }
                 });
         },
     )

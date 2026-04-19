@@ -2,6 +2,34 @@
 
 All notable changes to Slammer are documented here.
 
+## [0.4.2] — 2026-04-19
+
+### Brand + metadata
+
+- **Hyperfocus DSP transition.** Plugin vendor, URL, email, and CLAP ID all
+  updated from the legacy `REXIST` identity to `Hyperfocus DSP`
+  (`https://hyperfocusdsp.com`, `hello@hyperfocusdsp.com`,
+  `com.hyperfocusdsp.slammer`). VST3 class ID is unchanged to preserve
+  DAW-project compatibility for existing 0.4.x users.
+- **Footer mark.** Full `hyperfocus DSP` wordmark (with small-caps suffix and
+  ring-as-O from the canonical brand master) rendered in the footer strip.
+  Hover tooltip: "Made by Hyperfocus DSP".
+
+### UI
+
+- **UI scale.** Click-to-cycle badge in the header (1× / 1.5× / 2×) that
+  persists the chosen scale both inside the DAW project (nih-plug
+  `#[persist]`) and to a sidecar file so the standalone launcher forwards it
+  via `--dpi-scale` on the next launch. Scaling itself is delegated to
+  baseview's `WindowScalePolicy` — no in-editor `set_pixels_per_point`
+  fighting baseview.
+- **Knob cluster tightening.** AMT / RCT / DRV (macro compressor) now use the
+  same 18 px knob / 28 px cell as the PRECISE strip directly below, so the
+  two rows read as visually paired instead of one wider than the other.
+- **BOUNCE alignment.** The BOUNCE button's right edge is now anchored to the
+  cluster-column right edge, so it lines up exactly with KNE, TAIL, POST, and
+  the DICE LED row (previously off by 2–4 px).
+
 ## [0.4.1] — 2026-04-12
 
 ### Fixes
