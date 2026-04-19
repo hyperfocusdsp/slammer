@@ -640,13 +640,17 @@ impl Default for SlammerParams {
 /// Plain-data mirror of every automatable parameter in `SlammerParams`.
 ///
 /// Captures and applies via `ParamSetter` so host automation/undo see the
-/// changes. `master_volume` and `editor_state` are intentionally **not**
-/// persisted: master volume is treated as a user-facing level control, and
-/// the editor state is handled by nih_plug's `#[persist]` mechanism.
+/// changes. `master_volume` is stored as `Option<f32>`: new presets capture
+/// the current gain so A/B-ing loudness-varying presets stays level-matched,
+/// while legacy preset files (no field) deserialize to `None` and leave the
+/// user's current master untouched. `editor_state` is not in the snapshot —
+/// it's handled by nih_plug's `#[persist]` mechanism.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ParamSnapshot {
     pub decay_ms: f32,
+
+    pub master_volume: Option<f32>,
 
     pub sub_gain: f32,
     pub sub_fstart: f32,
@@ -707,6 +711,8 @@ impl ParamSnapshot {
     pub fn capture(p: &SlammerParams) -> Self {
         Self {
             decay_ms: p.decay_ms.value(),
+
+            master_volume: Some(p.master_volume.value()),
 
             sub_gain: p.sub_gain.value(),
             sub_fstart: p.sub_fstart.value(),
@@ -774,6 +780,10 @@ impl ParamSnapshot {
             };
         }
         set!(p.decay_ms, self.decay_ms);
+
+        if let Some(v) = self.master_volume {
+            set!(p.master_volume, v);
+        }
 
         set!(p.sub_gain, self.sub_gain);
         set!(p.sub_fstart, self.sub_fstart);
@@ -903,6 +913,28 @@ mod clap_param_tests {
         assert!((snap.dj_filter_pos).abs() < 1e-6);
         assert!(!snap.dj_filter_pre);
         assert!((snap.top_metal).abs() < 1e-6);
+    }
+
+    #[test]
+    fn param_snapshot_roundtrip_master_volume() {
+        let snap = ParamSnapshot {
+            master_volume: Some(0.5),
+            ..ParamSnapshot::default()
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: ParamSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, snap);
+        assert_eq!(back.master_volume, Some(0.5));
+    }
+
+    #[test]
+    fn legacy_preset_leaves_master_volume_untouched() {
+        // Pre-feature presets have no master_volume field; they must
+        // deserialize to None so apply() skips the master, preserving the
+        // user's current monitoring level.
+        let json = r#"{ "decay_ms": 120.0 }"#;
+        let snap: ParamSnapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snap.master_volume, None);
     }
 
     #[test]

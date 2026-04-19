@@ -690,16 +690,8 @@ pub fn draw_sub_top_row(
         let small_knob = 18.0f32;
         // Match the COMP strip's x so the three clusters stack visually.
         let col_x = panel_rect.right() - CONTENT_LEFT - 96.0 + 4.0;
-        let col_label_y = row_label_y + 6.0;
-        let col_row_y = row_knob_y + 4.0;
-
-        ui.painter().text(
-            egui::pos2(col_x, col_label_y),
-            egui::Align2::LEFT_TOP,
-            "PRECISE",
-            egui::FontId::new(9.0, egui::FontFamily::Monospace),
-            theme::TEXT_DIM,
-        );
+        // Align small-knob centers with the big TOP-row knob centers.
+        let col_row_y = row_knob_y + (KNOB_SIZE - small_knob) * 0.5;
 
         let knob_cell_w = small_knob + 10.0;
         let row_w = knob_cell_w * 3.0 + 6.0;
@@ -757,6 +749,17 @@ pub fn draw_sub_top_row(
                 );
             });
         });
+
+        // Group caption BELOW the cluster so small-knob centers align with
+        // the big TOP-row knob centers rather than being offset by a heading.
+        let caption_y = col_row_y + small_knob + 32.0;
+        ui.painter().text(
+            egui::pos2(col_x, caption_y),
+            egui::Align2::LEFT_TOP,
+            "PRECISE",
+            egui::FontId::new(9.0, egui::FontFamily::Monospace),
+            theme::TEXT_DIM,
+        );
     }
 
     row_knob_y + KNOB_SIZE + 34.0
@@ -936,39 +939,13 @@ pub fn draw_mid_row(
     {
         let small_knob = 18.0f32;
         let clap_cx = panel_rect.right() - CONTENT_LEFT - 96.0 + 4.0;
-        let clap_cy = row_knob_y + KNOB_SIZE * 0.5 - 2.0;
-
         let clap_on = params.clap_on.value();
-        draw_led(ui.painter(), clap_cx, clap_cy, clap_on);
-        ui.painter().text(
-            egui::pos2(clap_cx + 8.0, clap_cy),
-            egui::Align2::LEFT_CENTER,
-            "CLAP",
-            egui::FontId::new(9.0, egui::FontFamily::Monospace),
-            if clap_on { theme::WHITE } else { theme::TEXT_DIM },
-        );
-        let clap_rect = egui::Rect::from_center_size(
-            egui::pos2(clap_cx + 14.0, clap_cy),
-            egui::vec2(46.0, 14.0),
-        );
-        let clap_resp = ui.interact(
-            clap_rect,
-            egui::Id::new("clap_toggle"),
-            egui::Sense::click(),
-        );
-        if clap_resp.clicked() {
-            setter.begin_set_parameter(&params.clap_on);
-            setter.set_parameter(&params.clap_on, !clap_on);
-            setter.end_set_parameter(&params.clap_on);
-        }
-        if clap_resp.hovered() {
-            clap_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-        }
 
+        // Align small-knob centers with MID big-knob centers.
+        let row_y = row_knob_y + (KNOB_SIZE - small_knob) * 0.5;
         let knob_cell_w = small_knob + 10.0;
         let row_w = knob_cell_w * 3.0 + 6.0;
         let row_x = clap_cx - 4.0;
-        let row_y = clap_cy + 10.0;
         let knob_rect = egui::Rect::from_min_size(
             egui::pos2(row_x, row_y),
             egui::vec2(row_w, small_knob + 22.0),
@@ -1023,6 +1000,35 @@ pub fn draw_mid_row(
                 );
             });
         });
+
+        // LED + CLAP toggle chip BELOW the knob row.
+        let chip_top = row_y + small_knob + 32.0;
+        let clap_cy = chip_top + 5.0;
+        draw_led(ui.painter(), clap_cx, clap_cy, clap_on);
+        ui.painter().text(
+            egui::pos2(clap_cx + 8.0, clap_cy),
+            egui::Align2::LEFT_CENTER,
+            "CLAP",
+            egui::FontId::new(9.0, egui::FontFamily::Monospace),
+            if clap_on { theme::WHITE } else { theme::TEXT_DIM },
+        );
+        let clap_rect = egui::Rect::from_center_size(
+            egui::pos2(clap_cx + 14.0, clap_cy),
+            egui::vec2(46.0, 14.0),
+        );
+        let clap_resp = ui.interact(
+            clap_rect,
+            egui::Id::new("clap_toggle"),
+            egui::Sense::click(),
+        );
+        if clap_resp.clicked() {
+            setter.begin_set_parameter(&params.clap_on);
+            setter.set_parameter(&params.clap_on, !clap_on);
+            setter.end_set_parameter(&params.clap_on);
+        }
+        if clap_resp.hovered() {
+            clap_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+        }
     }
 
     row_knob_y + KNOB_SIZE + 34.0
@@ -1264,47 +1270,10 @@ pub fn draw_filter_cluster(
     let col_x = panel_rect.right() - CONTENT_LEFT - 96.0 + 4.0;
     let small_knob = 18.0f32;
 
-    ui.painter().text(
-        egui::pos2(col_x, top_y),
-        egui::Align2::LEFT_TOP,
-        "FILTER",
-        egui::FontId::new(9.0, egui::FontFamily::Monospace),
-        theme::TEXT_DIM,
-    );
-
-    let led_x = col_x + 52.0;
-    let led_y = top_y + 2.0;
-    let pre_on = params.dj_filter_pre.value();
-    let led_label = if pre_on { "PRE" } else { "POST" };
-    let led_color = if pre_on {
-        theme::RED_WAVEFORM
-    } else {
-        theme::TEXT_DIM
-    };
-    let led_rect = egui::Rect::from_min_size(
-        egui::pos2(led_x, led_y),
-        egui::vec2(32.0, 10.0),
-    );
-    let led_resp = ui.interact(
-        led_rect,
-        egui::Id::new("dj_filter_pre_led"),
-        egui::Sense::click(),
-    );
-    if led_resp.clicked() {
-        setter.begin_set_parameter(&params.dj_filter_pre);
-        setter.set_parameter(&params.dj_filter_pre, !pre_on);
-        setter.end_set_parameter(&params.dj_filter_pre);
-    }
-    draw_led(ui.painter(), led_x + 2.0, led_y + 4.0, pre_on);
-    ui.painter().text(
-        egui::pos2(led_x + 12.0, led_y),
-        egui::Align2::LEFT_TOP,
-        led_label,
-        egui::FontId::new(8.0, egui::FontFamily::Monospace),
-        led_color,
-    );
-
-    let knob_y = top_y + 14.0;
+    // Align small-knob centers with SAT/EQ big-knob centers. The caller
+    // passes top_y = row_knob_y + 4 (see editor.rs::filter_top calc), so
+    // the center-match offset is (KNOB_SIZE - small_knob)/2 - 4 = 3.
+    let knob_y = top_y + 3.0;
     let knob_cell_w = small_knob + 10.0;
     let row_w = knob_cell_w * 2.0 + 6.0;
     let knob_rect = egui::Rect::from_min_size(
@@ -1365,6 +1334,48 @@ pub fn draw_filter_cluster(
             );
         });
     });
+
+    // FILTER caption + PRE/POST routing chip BELOW the knob row.
+    let caption_y = knob_y + small_knob + 32.0;
+    ui.painter().text(
+        egui::pos2(col_x, caption_y),
+        egui::Align2::LEFT_TOP,
+        "FILTER",
+        egui::FontId::new(9.0, egui::FontFamily::Monospace),
+        theme::TEXT_DIM,
+    );
+
+    let led_x = col_x + 52.0;
+    let led_y = caption_y;
+    let pre_on = params.dj_filter_pre.value();
+    let led_label = if pre_on { "PRE" } else { "POST" };
+    let led_color = if pre_on {
+        theme::RED_WAVEFORM
+    } else {
+        theme::TEXT_DIM
+    };
+    let led_rect = egui::Rect::from_min_size(
+        egui::pos2(led_x, led_y),
+        egui::vec2(32.0, 10.0),
+    );
+    let led_resp = ui.interact(
+        led_rect,
+        egui::Id::new("dj_filter_pre_led"),
+        egui::Sense::click(),
+    );
+    if led_resp.clicked() {
+        setter.begin_set_parameter(&params.dj_filter_pre);
+        setter.set_parameter(&params.dj_filter_pre, !pre_on);
+        setter.end_set_parameter(&params.dj_filter_pre);
+    }
+    draw_led(ui.painter(), led_x + 2.0, led_y + 4.0, pre_on);
+    ui.painter().text(
+        egui::pos2(led_x + 12.0, led_y),
+        egui::Align2::LEFT_TOP,
+        led_label,
+        egui::FontId::new(8.0, egui::FontFamily::Monospace),
+        led_color,
+    );
 }
 
 pub fn draw_dice_row(

@@ -2,6 +2,30 @@
 
 All notable changes to Slammer are documented here.
 
+## [0.4.3] — 2026-04-19
+
+### Presets
+
+- **Factory preset library expanded.** Eleven new factory presets baked in
+  alongside the original three — `808`, `909`, `909old`, `clap`, `hh`, `Init`,
+  `overdose`, `psy`, `sd1`, `sd2`, `tight` — covering sub, snare, hat, clap,
+  and psytrance tonal territory. Fourteen factory presets total.
+- **Master volume is now part of a preset.** Saved as `master_volume` in
+  `ParamSnapshot` and applied on preset load, so presets that vary in
+  loudness audition at their intended monitoring level. Backward-compatible:
+  older preset files without the field load without touching the current
+  master. Most new factories ship with tuned master levels; a handful of
+  older ones (`909`, `sd2`, `tight`) intentionally leave master as-is.
+
+### UI
+
+- **Cluster label alignment.** PRECISE (ATK/REL/KNE), CLAP (LVL/FREQ/TAIL),
+  and FILTER (FILT/RES) mini-cluster captions now render *below* their knob
+  rows instead of above. This lines up each cluster's small knob centers with
+  the adjacent big-knob row, eliminating the vertical offset that made the
+  right side of the panel look misregistered. Click targets for the CLAP and
+  PRE/POST LEDs move with their captions and behave identically.
+
 ## [0.4.2] — 2026-04-19
 
 ### Brand + metadata
