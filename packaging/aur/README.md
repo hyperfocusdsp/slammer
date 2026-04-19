@@ -36,7 +36,7 @@ before it goes live.
 1. Update `pkgver` in `packaging/aur/PKGBUILD` (in this repo).
 2. Refresh the source hash:
    ```bash
-   curl -sL https://github.com/Hornfisk/slammer/archive/refs/tags/v<NEW>.tar.gz \
+   curl -sL https://github.com/hyperfocusdsp/slammer/archive/refs/tags/v<NEW>.tar.gz \
      | sha256sum
    ```
    Replace the value in `sha256sums=(...)`.

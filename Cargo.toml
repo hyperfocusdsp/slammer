@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 description = "Kick drum synthesizer plugin"
 authors = ["Hyperfocus DSP <hello@hyperfocusdsp.com>"]
 homepage = "https://hyperfocusdsp.com"
-repository = "https://github.com/Hornfisk/slammer"
+repository = "https://github.com/hyperfocusdsp/slammer"
 
 [lib]
 # `cdylib` for VST3/CLAP bundles; `rlib` so the `slammer-standalone` binary

@@ -16,7 +16,7 @@ interactive standalone editor.
 
 ## Listen
 
-▶ **[Play sound samples in your browser](https://hornfisk.github.io/slammer/)**
+▶ **[Play sound samples in your browser](https://hyperfocusdsp.github.io/slammer/)**
 
 Ten one-shots bounced straight out of the plugin via the BOUNCE button —
 clean kicks, 808/909 emulations, claps, snares, toms, and hats. No
@@ -25,7 +25,7 @@ download, just hit play.
 ## Quick start
 
 Download the latest build for your platform from the
-[Releases](https://github.com/Hornfisk/slammer/releases/latest) page,
+[Releases](https://github.com/hyperfocusdsp/slammer/releases/latest) page,
 extract, and run the installer:
 
 ```bash
@@ -36,7 +36,7 @@ extract, and run the installer:
 install.bat
 ```
 
-Rescan plugins in your DAW. Slammer appears as **Hornfisk / Slammer**.
+Rescan plugins in your DAW. Slammer appears as **Hyperfocus DSP / Slammer**.
 
 ## Download
 
@@ -53,7 +53,7 @@ bundles, and an install script.
 ### Verify your download
 
 Every release ships a `SHA256SUMS.txt` file on the
-[Releases](https://github.com/Hornfisk/slammer/releases/latest) page.
+[Releases](https://github.com/hyperfocusdsp/slammer/releases/latest) page.
 Download it alongside the archive and verify before running:
 
 ```bash
@@ -284,7 +284,7 @@ sudo pacman -S --needed base-devel pkg-config cmake \
 ### Build
 
 ```bash
-git clone https://github.com/Hornfisk/slammer.git
+git clone https://github.com/hyperfocusdsp/slammer.git
 cd slammer
 
 # Standalone only (quick dev loop)
