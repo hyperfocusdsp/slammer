@@ -8,7 +8,7 @@ full master bus (RMS compressor → transformer drive → brickwall limiter
 + user preset browser, one-shot WAV/AIFF bounce, and a fully
 interactive standalone editor.
 
-![Slammer](docs/slammer.png)
+![Slammer](docs/slammer.webp)
 
 **Formats:** VST3, CLAP, Standalone
 **Platforms:** Linux, macOS (Apple Silicon + Intel), Windows
