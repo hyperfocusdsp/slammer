@@ -359,6 +359,11 @@ src/
 - **Standalone on macOS Apple Silicon** — requires the included
   `slammer-macos.sh` launch script to set `--period-size 4096`. VST3
   and CLAP inside a DAW are unaffected.
+- **Standalone on Windows** — the binary probes the default WASAPI
+  output device at launch and uses its mix-format sample rate plus a
+  2048-sample period, because nih-plug's defaults (48 kHz / 512)
+  mismatch many Windows configurations. Pass `--sample-rate` /
+  `--period-size` explicitly to override.
 
 ## Dependencies
 

@@ -2,6 +2,19 @@
 
 All notable changes to Slammer are documented here.
 
+## [0.4.4] — 2026-04-21
+
+### Fixes
+
+- **Windows standalone now produces audio automatically.** The standalone
+  binary used to fall back to the dummy backend on many Windows setups
+  because nih-plug's defaults (48 kHz sample rate, 512-sample period)
+  mismatched the device's WASAPI mix format or minimum buffer size.
+  `run_standalone()` now probes the default output device on Windows and
+  forwards matching `--sample-rate` / `--period-size` to nih-plug via
+  `nih_export_standalone_with_args`. Linux and macOS paths are
+  unchanged. User-supplied `-r` / `-p` / `-b` flags still win.
+
 ## [0.4.3] — 2026-04-19
 
 ### Presets

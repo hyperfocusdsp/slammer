@@ -32,12 +32,28 @@ mod ui;
 
 mod util;
 
+#[cfg(target_os = "windows")]
+mod windows_standalone;
+
 pub use plugin::Slammer;
 
 nih_export_vst3!(plugin::Slammer);
 nih_export_clap!(plugin::Slammer);
 
 /// Entry point for the standalone binary. Called from `src/main.rs`.
+///
+/// On Windows we probe the default WASAPI output device and forward matching
+/// `--sample-rate` / `--period-size` to nih-plug, because its defaults
+/// (48 kHz / 512) mismatch most WASAPI mix formats and the backend has no
+/// negotiation path. Linux and macOS use nih-plug's default parser unchanged.
 pub fn run_standalone() {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(argv) = windows_standalone::probed_argv() {
+            nih_export_standalone_with_args::<plugin::Slammer, _>(argv);
+            return;
+        }
+    }
+
     nih_export_standalone::<plugin::Slammer>();
 }

@@ -3,7 +3,7 @@ members = ["xtask"]
 
 [package]
 name = "slammer"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Kick drum synthesizer plugin"
@@ -56,6 +56,14 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 # RNG for the DICE randomize feature (GUI thread only).
 rand = "0.8"
+
+# Windows-only: direct cpal access so the standalone can probe the default
+# output device and pass matching --sample-rate / --period-size to nih-plug.
+# Without this, nih-plug's hardcoded defaults (48 kHz / 512) mismatch WASAPI
+# on many Windows systems and the backend falls back to the dummy sink.
+# cpal is already transitive via nih-plug; this just exposes it directly.
+[target.'cfg(target_os = "windows")'.dependencies]
+cpal = "0.15"
 
 [profile.release]
 lto = "thin"
