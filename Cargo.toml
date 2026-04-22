@@ -62,8 +62,14 @@ rand = "0.8"
 # Without this, nih-plug's hardcoded defaults (48 kHz / 512) mismatch WASAPI
 # on many Windows systems and the backend falls back to the dummy sink.
 # cpal is already transitive via nih-plug; this just exposes it directly.
+#
+# winapi is also already transitive (via baseview) — declaring it here just
+# gives us `GetAsyncKeyState` / foreground-window checks so the standalone
+# can detect T/Space presses that nih-plug's outer WindowHandler swallows.
+# See `src/win_keys.rs` for the rationale.
 [target.'cfg(target_os = "windows")'.dependencies]
 cpal = "0.15"
+winapi = { version = "0.3", features = ["winuser", "processthreadsapi"] }
 
 [profile.release]
 lto = "thin"
