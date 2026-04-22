@@ -35,6 +35,9 @@ mod util;
 #[cfg(target_os = "windows")]
 mod windows_standalone;
 
+#[cfg(target_os = "windows")]
+pub(crate) mod win_keys;
+
 pub use plugin::Slammer;
 
 nih_export_vst3!(plugin::Slammer);

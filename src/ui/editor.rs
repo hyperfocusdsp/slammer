@@ -273,11 +273,31 @@ pub fn create(
                     let typing = ctx.wants_keyboard_input();
 
                     // ===== Test trigger (button + keyboard 'T') =====
+                    // On Windows standalone, egui never sees key events (the
+                    // outer nih-plug WindowHandler returns EventStatus::Ignored
+                    // for Event::Keyboard, so baseview->egui-baseview never
+                    // translates anything). We OR in a GetAsyncKeyState poll,
+                    // gated by our own `typing` guard and a foreground-thread
+                    // check inside `win_keys`, so the fallback only fires
+                    // when Slammer is the focused app.
                     let button_fired = panels::test_button(ui, panel_rect, header_center_y);
-                    let key_fired = !typing && ui.input(|i| i.key_pressed(egui::Key::T));
+                    let t_egui = !typing && ui.input(|i| i.key_pressed(egui::Key::T));
+                    #[cfg(target_os = "windows")]
+                    let t_win32 = !typing && {
+                        use std::sync::atomic::AtomicBool;
+                        static PREV: AtomicBool = AtomicBool::new(false);
+                        crate::win_keys::just_pressed(crate::win_keys::VK_T, &PREV)
+                    };
+                    #[cfg(not(target_os = "windows"))]
+                    let t_win32 = false;
+                    let key_fired = t_egui || t_win32;
                     if button_fired || key_fired {
                         if key_fired {
-                            tracing::info!("[keyboard] T shortcut fired");
+                            tracing::info!(
+                                "[keyboard] T shortcut fired (egui={}, win32={})",
+                                t_egui,
+                                t_win32
+                            );
                         }
                         if let Some(tx) = ui_tx.lock().as_mut() {
                             // Dropped triggers are intentional: the ring is
@@ -289,11 +309,22 @@ pub fn create(
 
                     // Spacebar toggles the standalone sequencer. Gated off in
                     // DAW mode so the host's own transport owns Space.
-                    if !typing
-                        && ui.input(|i| i.key_pressed(egui::Key::Space))
-                        && !sequencer.is_host_synced()
-                    {
-                        tracing::info!("[keyboard] Space shortcut fired");
+                    // Same Windows-standalone fallback as T above.
+                    let space_egui = !typing && ui.input(|i| i.key_pressed(egui::Key::Space));
+                    #[cfg(target_os = "windows")]
+                    let space_win32 = !typing && {
+                        use std::sync::atomic::AtomicBool;
+                        static PREV: AtomicBool = AtomicBool::new(false);
+                        crate::win_keys::just_pressed(crate::win_keys::VK_SPACE, &PREV)
+                    };
+                    #[cfg(not(target_os = "windows"))]
+                    let space_win32 = false;
+                    if (space_egui || space_win32) && !sequencer.is_host_synced() {
+                        tracing::info!(
+                            "[keyboard] Space shortcut fired (egui={}, win32={})",
+                            space_egui,
+                            space_win32
+                        );
                         sequencer.toggle_running();
                     }
 
