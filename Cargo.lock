@@ -414,24 +414,7 @@ dependencies = [
 [[package]]
 name = "baseview"
 version = "0.1.0"
-source = "git+https://github.com/RustAudio/baseview.git?rev=579130ecb4f9f315ae52190af42f0ea46aeaa4a2#579130ecb4f9f315ae52190af42f0ea46aeaa4a2"
-dependencies = [
- "cocoa",
- "core-foundation",
- "keyboard-types",
- "nix 0.22.3",
- "objc",
- "raw-window-handle 0.5.2",
- "uuid",
- "winapi",
- "x11",
- "x11rb",
-]
-
-[[package]]
-name = "baseview"
-version = "0.1.0"
-source = "git+https://github.com/RustAudio/baseview.git?rev=9a0b42c09d712777b2edb4c5e0cb6baf21e988f0#9a0b42c09d712777b2edb4c5e0cb6baf21e988f0"
+source = "git+https://github.com/Hornfisk/baseview.git?rev=237d323c729f3aa99476ba3efa50129c5e86cad3#237d323c729f3aa99476ba3efa50129c5e86cad3"
 dependencies = [
  "cocoa",
  "core-foundation",
@@ -1050,7 +1033,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading 0.8.9",
+ "libloading 0.7.4",
 ]
 
 [[package]]
@@ -1088,7 +1071,7 @@ name = "egui-baseview"
 version = "0.5.0"
 source = "git+https://github.com/BillyDM/egui-baseview.git?rev=ec70c3fe6b2f070dcacbc22924431edbe24bd1c0#ec70c3fe6b2f070dcacbc22924431edbe24bd1c0"
 dependencies = [
- "baseview 0.1.0 (git+https://github.com/RustAudio/baseview.git?rev=9a0b42c09d712777b2edb4c5e0cb6baf21e988f0)",
+ "baseview",
  "copypasta",
  "egui",
  "egui_glow",
@@ -1195,7 +1178,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2049,7 +2032,7 @@ dependencies = [
  "atomic_float",
  "atomic_refcell",
  "backtrace",
- "baseview 0.1.0 (git+https://github.com/RustAudio/baseview.git?rev=579130ecb4f9f315ae52190af42f0ea46aeaa4a2)",
+ "baseview",
  "bitflags 1.3.2",
  "cfg-if",
  "clap",
@@ -2090,7 +2073,7 @@ name = "nih_plug_egui"
 version = "0.0.0"
 source = "git+https://github.com/robbert-vdh/nih-plug?rev=28b149ec4d62757d0b448809148a0c3ca6e09a95#28b149ec4d62757d0b448809148a0c3ca6e09a95"
 dependencies = [
- "baseview 0.1.0 (git+https://github.com/RustAudio/baseview.git?rev=9a0b42c09d712777b2edb4c5e0cb6baf21e988f0)",
+ "baseview",
  "crossbeam",
  "egui-baseview",
  "nih_plug",
@@ -2171,7 +2154,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2945,7 +2928,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3231,7 +3214,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3250,7 +3233,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3722,7 +3705,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

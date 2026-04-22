@@ -68,3 +68,18 @@ cpal = "0.15"
 [profile.release]
 lto = "thin"
 strip = "symbols"
+
+# Force both baseview pins (via nih-plug and via egui-baseview) to a newer
+# master that includes RustAudio/baseview#212 — "Implement keyboard event
+# hook on Windows". The pinned nih-plug commit predates this fix, so
+# standalone Windows builds receive zero keyboard events (confirmed via
+# empty `[keyboard]` diagnostic in slammer.log). The PR is a pure add
+# (new `src/win/hook.rs` + two field additions to `WindowState`) with no
+# public API change, so both dependents continue to compile unchanged.
+#
+# Cargo requires the patch source to be a different URL than the one
+# being patched, so we pin to a fork at Hornfisk/baseview that tracks
+# `RustAudio/baseview@master` (commit 237d323).
+# Upstream fix: https://github.com/RustAudio/baseview/pull/212
+[patch."https://github.com/RustAudio/baseview.git"]
+baseview = { git = "https://github.com/Hornfisk/baseview.git", rev = "237d323c729f3aa99476ba3efa50129c5e86cad3" }
