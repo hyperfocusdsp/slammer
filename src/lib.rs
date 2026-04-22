@@ -47,6 +47,18 @@ nih_export_clap!(plugin::Slammer);
 /// (48 kHz / 512) mismatch most WASAPI mix formats and the backend has no
 /// negotiation path. Linux and macOS use nih-plug's default parser unchanged.
 pub fn run_standalone() {
+    // Initialize logging + panic hook before anything else so a panic in
+    // backend probing, window creation, or the first paint still lands in
+    // `slammer.log`. The plugin path also calls `logging::init()` from
+    // `initialize()`; the `Once` inside makes the second call a no-op.
+    logging::init();
+    tracing::info!(
+        "Slammer standalone v{} starting (os={}, arch={})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+
     #[cfg(target_os = "windows")]
     {
         if let Some(argv) = windows_standalone::probed_argv() {

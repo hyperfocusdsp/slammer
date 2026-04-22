@@ -9,6 +9,8 @@ use nih_plug::prelude::*;
 use nih_plug_egui::egui;
 use nih_plug_egui::{create_egui_editor, EguiState};
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::sync::Arc;
 
 use crate::export::{self, ExportOutcome};
@@ -20,6 +22,13 @@ use crate::ui::preset_bar::PresetBar;
 use crate::ui::theme;
 use crate::util::messages::UiToDsp;
 use crate::util::telemetry::{MeterShared, TelemetryConsumer};
+
+/// Diagnostic: log the first N keyboard events egui delivers, then go
+/// quiet. If a user reports "keyboard shortcuts don't work" the log will
+/// show whether any key events arrive at egui at all — the common Windows
+/// failure mode is that baseview/winit silently drops them.
+static KEY_EVENT_LOG_COUNT: AtomicUsize = AtomicUsize::new(0);
+const KEY_EVENT_LOG_MAX: usize = 32;
 
 /// Rolling ring of recent audio peaks for the OUTPUT waveform display.
 struct WaveformDisplay {
@@ -61,6 +70,13 @@ pub fn create(
     // The one-shot bounce button lives in the SAT/EQ row and fires through
     // this state so the next export opens at the same directory.
     let export_state = Arc::new(Mutex::new(export::load_export_state()));
+    // Bounce runs on a worker thread — calling `rfd::FileDialog::save_file()`
+    // from inside the egui paint closure pumps a nested Win32 message loop
+    // while OpenGL is mid-frame, which crashed the app on Windows. The worker
+    // owns its own thread context, and the receiver here lets the UI thread
+    // drain the outcome once the thread finishes.
+    let bounce_inflight: Arc<Mutex<Option<mpsc::Receiver<ExportOutcome>>>> =
+        Arc::new(Mutex::new(None));
     let editor_state_clone = Arc::clone(&editor_state);
     // Visually smoothed GR meter value — instant attack, slow release, held
     // across frames so the bar doesn't flicker between audio buffers.
@@ -230,10 +246,39 @@ pub fn create(
                         }
                     }
 
+                    // Diagnostic: log the first few key events so we can
+                    // tell whether keys are reaching egui at all on Windows.
+                    // Bounded so a long session doesn't spam the log.
+                    if KEY_EVENT_LOG_COUNT.load(Ordering::Relaxed) < KEY_EVENT_LOG_MAX {
+                        ctx.input(|i| {
+                            for event in &i.events {
+                                if matches!(event, egui::Event::Key { .. }) {
+                                    let n = KEY_EVENT_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+                                    if n < KEY_EVENT_LOG_MAX {
+                                        tracing::info!(
+                                            "[keyboard] event #{}: {:?} (focus={})",
+                                            n,
+                                            event,
+                                            i.focused
+                                        );
+                                    }
+                                }
+                            }
+                        });
+                    }
+
+                    // Skip global shortcuts when a TextEdit wants the keys —
+                    // otherwise typing "T" in the preset-name field would
+                    // also fire a test kick.
+                    let typing = ctx.wants_keyboard_input();
+
                     // ===== Test trigger (button + keyboard 'T') =====
                     let button_fired = panels::test_button(ui, panel_rect, header_center_y);
-                    let key_fired = ui.input(|i| i.key_pressed(egui::Key::T));
+                    let key_fired = !typing && ui.input(|i| i.key_pressed(egui::Key::T));
                     if button_fired || key_fired {
+                        if key_fired {
+                            tracing::info!("[keyboard] T shortcut fired");
+                        }
                         if let Some(tx) = ui_tx.lock().as_mut() {
                             // Dropped triggers are intentional: the ring is
                             // small, and the user won't notice one missed
@@ -244,9 +289,11 @@ pub fn create(
 
                     // Spacebar toggles the standalone sequencer. Gated off in
                     // DAW mode so the host's own transport owns Space.
-                    if ui.input(|i| i.key_pressed(egui::Key::Space))
+                    if !typing
+                        && ui.input(|i| i.key_pressed(egui::Key::Space))
                         && !sequencer.is_host_synced()
                     {
+                        tracing::info!("[keyboard] Space shortcut fired");
                         sequencer.toggle_running();
                     }
 
@@ -349,18 +396,76 @@ pub fn create(
                         let bounce_clicked = panels::draw_bounce_button(
                             ui, panel_rect, bounce_top,
                         );
+
+                        // Drain any completed bounce from the worker thread
+                        // first so the next click isn't blocked by a stale
+                        // receiver.
+                        {
+                            let mut slot = bounce_inflight.lock();
+                            let drained = if let Some(rx) = slot.as_ref() {
+                                match rx.try_recv() {
+                                    Ok(outcome) => {
+                                        match outcome {
+                                            ExportOutcome::Written(path) => tracing::info!(
+                                                "bounce written: {}",
+                                                path.display()
+                                            ),
+                                            ExportOutcome::Cancelled => {}
+                                            ExportOutcome::UnsupportedExtension(ext) => {
+                                                tracing::warn!(
+                                                    "bounce: unsupported extension .{}",
+                                                    ext
+                                                );
+                                            }
+                                            ExportOutcome::Failed(msg) => {
+                                                tracing::error!("bounce failed: {}", msg);
+                                            }
+                                        }
+                                        true
+                                    }
+                                    Err(mpsc::TryRecvError::Empty) => false,
+                                    Err(mpsc::TryRecvError::Disconnected) => {
+                                        tracing::error!(
+                                            "bounce worker disconnected without result"
+                                        );
+                                        true
+                                    }
+                                }
+                            } else {
+                                false
+                            };
+                            if drained {
+                                *slot = None;
+                            }
+                        }
+
                         if bounce_clicked {
-                            let mut state = export_state.lock();
-                            match export::export_one_shot(&mut state, &params) {
-                                ExportOutcome::Written(path) => {
-                                    tracing::info!("bounce written: {}", path.display());
-                                }
-                                ExportOutcome::Cancelled => {}
-                                ExportOutcome::UnsupportedExtension(ext) => {
-                                    tracing::warn!("bounce: unsupported extension .{}", ext);
-                                }
-                                ExportOutcome::Failed(msg) => {
-                                    tracing::error!("bounce failed: {}", msg);
+                            let mut slot = bounce_inflight.lock();
+                            if slot.is_some() {
+                                tracing::info!(
+                                    "bounce: worker still running, ignoring click"
+                                );
+                            } else {
+                                let (tx, rx) = mpsc::channel();
+                                let export_state_worker = Arc::clone(&export_state);
+                                let params_worker = Arc::clone(&params);
+                                let spawn_result = std::thread::Builder::new()
+                                    .name("slammer-bounce".into())
+                                    .spawn(move || {
+                                        let outcome = {
+                                            let mut state = export_state_worker.lock();
+                                            export::export_one_shot(&mut state, &params_worker)
+                                        };
+                                        let _ = tx.send(outcome);
+                                    });
+                                match spawn_result {
+                                    Ok(_handle) => *slot = Some(rx),
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "bounce: failed to spawn worker: {}",
+                                            e
+                                        );
+                                    }
                                 }
                             }
                         }

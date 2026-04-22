@@ -7,6 +7,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
+use std::panic;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 
@@ -71,7 +72,47 @@ fn try_init() -> Result<(), String> {
     // That's not fatal for us — just move on.
     let _ = tracing::subscriber::set_global_default(subscriber);
     tracing::info!("Slammer logger initialized — log file: {:?}", log_path);
+
+    install_panic_hook(log_path);
     Ok(())
+}
+
+// On Windows the standalone is a console-subsystem binary, so a panic closes
+// the cmd window before the user can read the message. Route panics through
+// `tracing::error!` as well so the log file captures the full payload plus
+// a backtrace (force_capture ignores `RUST_BACKTRACE`).
+fn install_panic_hook(log_path: PathBuf) {
+    let previous = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let payload = info
+            .payload()
+            .downcast_ref::<&'static str>()
+            .copied()
+            .map(str::to_string)
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "<non-string panic payload>".to_string());
+        // `force_capture` ignores `RUST_BACKTRACE`, so the user doesn't
+        // need to set it to get a useful crash log.
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        tracing::error!(
+            "PANIC at {}: {}\nbacktrace:\n{}",
+            location,
+            payload,
+            backtrace
+        );
+        eprintln!(
+            "\n=== SLAMMER PANIC ===\nat {}: {}\nlog: {}\nbacktrace:\n{}\n",
+            location,
+            payload,
+            log_path.display(),
+            backtrace
+        );
+        previous(info);
+    }));
 }
 
 fn rotate_if_needed(log_path: &Path) {

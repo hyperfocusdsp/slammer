@@ -10,10 +10,11 @@
 //! 5. Persist the chosen directory + format so the next bounce lands next to
 //!    this one without any extra clicks.
 //!
-//! Runs entirely on the GUI thread. No audio-thread coordination, no RT
-//! safety concerns. The rfd save-dialog call blocks briefly — that's fine
-//! because the user is actively waiting for it and audio runs on its own
-//! thread.
+//! Runs on a dedicated bounce worker thread (spawned by the editor on
+//! click). The rfd save-dialog pumps a nested Win32 message loop, which on
+//! Windows deadlocks / crashes if called from inside the egui paint closure
+//! while OpenGL is mid-frame — hence the worker. No audio-thread
+//! coordination, no RT safety concerns.
 
 pub mod render;
 pub mod writer;
