@@ -2,6 +2,37 @@
 
 All notable changes to Slammer are documented here.
 
+## [0.4.5] — 2026-04-22
+
+### Fixes
+
+- **Windows standalone keyboard shortcuts now work.** T (trigger) and
+  Space (sequencer play/stop) were dead on Windows because nih-plug's
+  standalone wrapper opens an outer baseview window whose
+  `WindowHandler::on_event` returns `EventStatus::Ignored` for every
+  event — including `Event::Keyboard`. Windows routes `WM_KEYDOWN` to
+  that outer hwnd, so the egui child window never saw any key events.
+  Fixed with a Windows-only `GetAsyncKeyState` poll for T and Space,
+  gated by a foreground-window-thread check so background presses in
+  other apps can't trigger Slammer. Linux, macOS, and plugin-host
+  paths are unchanged.
+- **BOUNCE no longer crashes on Windows.** Clicking BOUNCE triggered a
+  non-unwinding panic inside `wglSwapLayerBuffers` — the synchronous
+  `rfd::FileDialog::save_file()` pumps a nested Win32 message loop,
+  which re-entered the egui paint while OpenGL was mid-frame. The
+  dialog now runs on a dedicated `slammer-bounce` worker thread; the
+  editor polls the result on the next paint.
+- **Baseview updated to include RustAudio/baseview#212** (keyboard
+  event hook on Windows), so plugin hosts that intercept keyboard
+  messages (Ableton etc.) deliver them to Slammer.
+
+### Diagnostics
+
+- **Crash-safe logging.** Every panic — including non-unwinding ones —
+  now writes location, payload, and backtrace to
+  `%APPDATA%\Slammer\slammer\data\logs\slammer.log` and stderr, so
+  a closing Windows console no longer swallows the diagnostic.
+
 ## [0.4.4] — 2026-04-21
 
 ### Fixes
