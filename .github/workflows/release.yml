@@ -137,3 +137,24 @@ jobs:
           generate_release_notes: true
           files: release/*
           body_path: CHANGELOG.md
+
+  notify-site:
+    # Triggers a rebuild of hyperfocusdsp.com so the plugin version shown
+    # on the site follows GitHub releases automatically. The site pulls
+    # `latest` from this repo's GitHub API at build time (see
+    # `src/lib/plugin-versions.ts` in hyperfocusdsp/hyperfocus); this
+    # step just pokes Cloudflare Pages to actually rebuild.
+    # Skipped gracefully if the secret isn't set, so forks don't fail.
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST Cloudflare Pages Deploy Hook
+        env:
+          HOOK: ${{ secrets.HYPERFOCUS_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "HYPERFOCUS_DEPLOY_HOOK not set; skipping site rebuild trigger"
+            exit 0
+          fi
+          curl -fsS -X POST "$HOOK"
+          echo "Triggered hyperfocusdsp.com rebuild"
