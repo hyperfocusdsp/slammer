@@ -10,11 +10,25 @@
 //! actually supports.
 
 use cpal::traits::{DeviceTrait, HostTrait};
+use cpal::SupportedBufferSize;
 
-/// Safe Windows period size. nih-plug#147 documents that WASAPI commonly
-/// reports minimums of 1056 or 2048; 2048 is a round number that works
-/// across the Windows devices the project has been tested on.
-const WINDOWS_SAFE_PERIOD: u32 = 2048;
+/// Safe Windows period size, in samples. History:
+///
+/// * `512` — nih-plug default; underruns on almost every WASAPI setup.
+/// * `2048` (v0.4.4, 2026-04-22) — fine on tested dev machines.
+/// * `4096` (v0.5.3, 2026-04-24) — needed for managed / corporate W11
+///   where background services (Defender, Intune, WMI polling, etc.)
+///   steal cycles from the audio thread in bursts that a 43 ms cushion
+///   can't absorb. 85 ms of headroom handles the worst case we've
+///   observed without perceptibly hurting playback — a kick drum synth
+///   is almost always sequencer-driven, and 85 ms of output latency is
+///   invisible in that context.
+///
+/// Bump again (and update this comment) only if a confirmed click
+/// report with a bigger buffer comes in. The startup log now reports
+/// the device's `buffer_size` range, so the next bump decision is
+/// evidence-driven instead of a guess.
+const WINDOWS_SAFE_PERIOD: u32 = 4096;
 
 fn arg_already_set(args: &[String], long: &str, short: &str) -> bool {
     args.iter().any(|a| {
@@ -41,8 +55,30 @@ pub fn probed_argv() -> Option<Vec<String>> {
     let host = cpal::default_host();
     let device = host.default_output_device()?;
 
+    let device_name = device.name().unwrap_or_else(|_| "<unknown>".into());
     let default_cfg = device.default_output_config().ok()?;
     let probed_sr = default_cfg.sample_rate().0;
+
+    // Collect + log the device's reported buffer-size range. If a future
+    // Windows machine clicks even at 4096, this line in the log tells us
+    // whether the OS/driver is advertising an unusually high minimum
+    // (→ bump the constant) or the underrun is somewhere else entirely.
+    let buffer_range = device
+        .supported_output_configs()
+        .ok()
+        .and_then(|mut iter| iter.find(|c| c.channels() == 2))
+        .map(|c| match c.buffer_size() {
+            SupportedBufferSize::Range { min, max } => format!("{min}..{max}"),
+            SupportedBufferSize::Unknown => "unknown".to_string(),
+        })
+        .unwrap_or_else(|| "n/a".to_string());
+    tracing::info!(
+        "WASAPI probe: device={:?}, sample_rate={}, buffer_size_range={}, chosen_period={}",
+        device_name,
+        probed_sr,
+        buffer_range,
+        WINDOWS_SAFE_PERIOD
+    );
 
     let stereo_supported = device.supported_output_configs().ok()?.any(|c| {
         c.channels() == 2

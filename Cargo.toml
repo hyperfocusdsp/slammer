@@ -3,7 +3,7 @@ members = ["xtask"]
 
 [package]
 name = "slammer"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Kick drum synthesizer plugin"

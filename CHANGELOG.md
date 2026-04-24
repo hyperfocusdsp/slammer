@@ -2,6 +2,29 @@
 
 All notable changes to Slammer are documented here.
 
+## [0.5.3] — 2026-04-24
+
+### Fixed
+
+- **Windows standalone audio-thread underruns on managed / corporate
+  setups.** The WASAPI probe's period-size default moved from 2048
+  (~43 ms) to 4096 (~85 ms). On machines where Defender / Intune /
+  WMI or similar background services steal cycles from the audio
+  thread in bursts, 43 ms of buffer wasn't enough to absorb the
+  stall and random clicks landed in the output. 85 ms handles the
+  worst case observed on a managed W11 box without perceptibly
+  affecting a sequencer-driven kick drum. Sample rate probe
+  (previous fix in v0.4.4) is unchanged.
+
+### Added
+
+- **WASAPI-probe startup log line.** `src/windows_standalone.rs`
+  now emits `WASAPI probe: device=..., sample_rate=..., buffer_size_range=..., chosen_period=...`
+  at launch. Makes future underrun reports evidence-driven — if a
+  machine clicks even at 4096, the log tells us whether the driver
+  is advertising an unusually high minimum (bump the constant) or
+  the underrun is somewhere else entirely.
+
 ## [0.5.2] — 2026-04-24
 
 ### Fixed
