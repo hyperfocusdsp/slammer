@@ -3,7 +3,7 @@ members = ["xtask"]
 
 [package]
 name = "slammer"
-version = "0.4.5"
+version = "0.5.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Kick drum synthesizer plugin"
@@ -27,6 +27,11 @@ nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug", rev = "28b149
 
 # Real-time safety
 rtrb = "0.3"
+
+# FFT for the OUTPUT-display spectrum analyzer. Thin wrapper over rustfft
+# that takes real-valued input directly (audio is real) and pre-plans the
+# transform at `initialize()`, so `process()` allocates nothing.
+realfft = "3.5"
 
 # Concurrency
 parking_lot = "0.12"

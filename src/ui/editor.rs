@@ -21,7 +21,9 @@ use crate::ui::panels::{self, CONTENT_LEFT, KNOB_SPACING};
 use crate::ui::preset_bar::PresetBar;
 use crate::ui::theme;
 use crate::util::messages::UiToDsp;
-use crate::util::telemetry::{MeterShared, TelemetryConsumer};
+use crate::util::telemetry::{MeterShared, SpectrumShared, TelemetryConsumer};
+
+use crate::dsp::spectrum::{BINS as SPECTRUM_BINS, DB_CEIL, DB_FLOOR};
 
 /// Diagnostic: log the first N keyboard events egui delivers, then go
 /// quiet. If a user reports "keyboard shortcuts don't work" the log will
@@ -52,6 +54,48 @@ impl WaveformDisplay {
     }
 }
 
+/// GUI-side spectrum state: freshest dB-per-band snapshot plus a slowly
+/// decaying peak-hold line. Decay is driven by frame time, not audio time,
+/// so the dots feel consistent regardless of buffer size.
+struct SpectrumDisplay {
+    bins: [f32; SPECTRUM_BINS],
+    peak_hold: [f32; SPECTRUM_BINS],
+}
+
+impl SpectrumDisplay {
+    fn new() -> Self {
+        Self {
+            bins: [DB_FLOOR; SPECTRUM_BINS],
+            peak_hold: [DB_FLOOR; SPECTRUM_BINS],
+        }
+    }
+
+    /// Drain atomic bin state from the audio thread, then apply peak-hold
+    /// decay with a ~500 ms one-pole. `dt` is the frame time (seconds).
+    fn update(&mut self, shared: &SpectrumShared, dt: f32) {
+        // Peak-hold "tau" — seconds for the hold dot to decay by 1/e.
+        // At 500 ms the dot lingers long enough to read a transient.
+        let tau = 0.5f32;
+        let decay_per_frame = (-dt / tau).exp();
+        // Decay toward the floor so silent bands don't leave frozen dots at
+        // mid-height indefinitely.
+        for i in 0..SPECTRUM_BINS {
+            let v = shared.load_bin(i).clamp(DB_FLOOR, DB_CEIL);
+            self.bins[i] = v;
+            let prior = self.peak_hold[i];
+            // Decay the existing hold toward the floor, then max against the
+            // current reading. This way a fresh transient instantly lights
+            // the dot, but a decaying tail just lets it fall at tau=500 ms.
+            let decayed = DB_FLOOR + (prior - DB_FLOOR) * decay_per_frame;
+            self.peak_hold[i] = decayed.max(v);
+        }
+    }
+}
+
+// Factory function — each argument is genuinely distinct editor-owned state
+// plumbed in from `Plugin::editor()`. Bundling them into a struct would just
+// rename the same 8 fields, not reduce surface area.
+#[allow(clippy::too_many_arguments)]
 pub fn create(
     editor_state: Arc<EguiState>,
     params: Arc<SlammerParams>,
@@ -60,9 +104,11 @@ pub fn create(
     preset_manager: Arc<Mutex<PresetManager>>,
     sequencer: Arc<Sequencer>,
     meter: Arc<MeterShared>,
+    spectrum: Arc<SpectrumShared>,
 ) -> Option<Box<dyn Editor>> {
     let telemetry = Arc::new(Mutex::new(telemetry_rx));
     let waveform = Arc::new(Mutex::new(WaveformDisplay::new(200)));
+    let spectrum_display = Arc::new(Mutex::new(SpectrumDisplay::new()));
     let preset_bar = Arc::new(Mutex::new(PresetBar::new(&preset_manager)));
     let ui_tx = Arc::new(Mutex::new(ui_tx));
     let seq_ui_state = Arc::new(Mutex::new(panels::SequencerUiState::default()));
@@ -379,14 +425,26 @@ pub fn create(
                         *g
                     };
 
+                    // Drain atomic spectrum bins + decay peak-hold once per
+                    // frame, before any MasterRow draws read the values.
+                    {
+                        let mut sd = spectrum_display.lock();
+                        sd.update(&spectrum, dt);
+                    }
+
                     {
                         let wf = waveform.lock();
+                        let sd = spectrum_display.lock();
+                        let mode = panels::display_mode(ctx);
                         let master_row = panels::MasterRow {
                             master_y,
                             wf_left,
                             wf_width,
                             wf_height,
                             waveform_peaks: &wf.peaks,
+                            spectrum_bins: &sd.bins,
+                            spectrum_peak_hold: &sd.peak_hold,
+                            display_mode: mode,
                             gr_db: gr_smoothed,
                         };
                         master_row.draw(ui, setter, &params, panel_rect);

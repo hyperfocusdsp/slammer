@@ -25,6 +25,7 @@ mod dsp {
     pub mod noise;
     pub mod oscillator;
     pub mod saturation;
+    pub mod spectrum;
     pub mod tube;
 }
 

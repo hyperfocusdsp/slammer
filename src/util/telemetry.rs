@@ -7,6 +7,8 @@
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use crate::dsp::spectrum::BINS as SPECTRUM_BINS;
+
 const RING_SIZE: usize = 4096;
 
 /// Lock-free meter state shared between the audio and GUI threads.
@@ -38,6 +40,40 @@ impl MeterShared {
     #[inline]
     pub fn load_gr_db(&self) -> f32 {
         f32::from_bits(self.gr_db_bits.load(Ordering::Relaxed))
+    }
+}
+
+/// Lock-free spectrum-bin state shared between the audio and GUI threads.
+///
+/// Same pattern as [`MeterShared`]: each band's dB value is stored as the bit
+/// pattern of an `f32` in an `AtomicU32`. 64 atomic stores per FFT completion
+/// (~every 21 ms at 48 kHz / 1024) is effectively free on x86, and the GUI
+/// reads each atomic independently — mild cross-bin skew is invisible in a
+/// visualizer.
+pub struct SpectrumShared {
+    bins_bits: [AtomicU32; SPECTRUM_BINS],
+}
+
+impl SpectrumShared {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            bins_bits: std::array::from_fn(|_| AtomicU32::new(0)),
+        })
+    }
+
+    /// Audio thread: publish a fresh bins-in-dB array. Called once per FFT
+    /// completion, not per sample.
+    #[inline]
+    pub fn store_bins(&self, bins_db: &[f32; SPECTRUM_BINS]) {
+        for (slot, v) in self.bins_bits.iter().zip(bins_db.iter()) {
+            slot.store(v.to_bits(), Ordering::Relaxed);
+        }
+    }
+
+    /// GUI thread: read the latest published bin (dB).
+    #[inline]
+    pub fn load_bin(&self, i: usize) -> f32 {
+        f32::from_bits(self.bins_bits[i].load(Ordering::Relaxed))
     }
 }
 

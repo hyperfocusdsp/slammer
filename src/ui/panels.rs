@@ -9,6 +9,7 @@ use nih_plug::prelude::*;
 use nih_plug::util;
 use nih_plug_egui::egui;
 
+use crate::dsp::spectrum::{BINS as SPECTRUM_BINS, DB_CEIL, DB_FLOOR};
 use crate::params::SlammerParams;
 use crate::ui::knob;
 use crate::ui::theme;
@@ -21,6 +22,39 @@ pub const KNOB_SPACING: f32 = 52.0;
 pub const RACK_EAR_W: f32 = 16.0;
 pub const CONTENT_LEFT: f32 = RACK_EAR_W + 14.0;
 pub const HEADER_H: f32 = 28.0;
+
+/// Which view the OUTPUT display is currently showing. Toggled by clicking
+/// the display itself. Lives in egui `Memory` (temp) so it persists across
+/// widget-tree rebuilds within a session and resets on full plugin reopen.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DisplayMode {
+    Waveform,
+    Spectrum,
+}
+
+impl DisplayMode {
+    fn toggled(self) -> Self {
+        match self {
+            DisplayMode::Waveform => DisplayMode::Spectrum,
+            DisplayMode::Spectrum => DisplayMode::Waveform,
+        }
+    }
+}
+
+fn display_mode_id() -> egui::Id {
+    egui::Id::new("output_display_mode")
+}
+
+/// Read the current OUTPUT-display mode from egui Memory. Defaults to
+/// Waveform if the key has never been set.
+pub fn display_mode(ctx: &egui::Context) -> DisplayMode {
+    ctx.data_mut(|d| d.get_temp::<DisplayMode>(display_mode_id()))
+        .unwrap_or(DisplayMode::Waveform)
+}
+
+fn set_display_mode(ctx: &egui::Context, mode: DisplayMode) {
+    ctx.data_mut(|d| d.insert_temp(display_mode_id(), mode));
+}
 
 /// Draw the panel background, rack ears, screws, bevels, and title strip.
 /// Returns the vertical center of the header band, which downstream code
@@ -159,16 +193,24 @@ pub fn test_button(ui: &mut egui::Ui, panel_rect: egui::Rect, header_center_y: f
     clicked
 }
 
-/// Draw the master row (OUTPUT waveform display + master knobs).
-/// `waveform_peaks` is a slice of the rolling waveform to render inside the
-/// display; `knob_readout_text` is the optional 7-seg text to show in the
-/// display's bottom-right corner.
+/// Draw the master row (OUTPUT waveform / spectrum display + master knobs).
+///
+/// The OUTPUT display can render either a rolling peak waveform or a 64-band
+/// log-frequency spectrum with peak-hold dots; clicking the display itself
+/// toggles between the two.
 pub struct MasterRow<'a> {
     pub master_y: f32,
     pub wf_left: f32,
     pub wf_width: f32,
     pub wf_height: f32,
     pub waveform_peaks: &'a [f32],
+    /// Latest dB-per-band snapshot from the audio thread. Indices 0..BINS,
+    /// values in `[DB_FLOOR, DB_CEIL]` (i.e. -60..0).
+    pub spectrum_bins: &'a [f32; SPECTRUM_BINS],
+    /// Decayed peak-hold line for the spectrum view. Same units as `spectrum_bins`.
+    pub spectrum_peak_hold: &'a [f32; SPECTRUM_BINS],
+    /// Which of the two views to draw this frame.
+    pub display_mode: DisplayMode,
     /// Smoothed gain reduction (positive dB) from the master-bus compressor,
     /// for the GR overlay bar drawn on top of the OUTPUT display.
     pub gr_db: f32,
@@ -182,6 +224,25 @@ impl<'a> MasterRow<'a> {
         params: &SlammerParams,
         panel_rect: egui::Rect,
     ) {
+        // The full OUTPUT display rect — also the hit target for the
+        // waveform↔spectrum toggle. Interact *before* painting so clicks
+        // register on the z-top layer regardless of which content we draw.
+        let display_rect = egui::Rect::from_min_size(
+            egui::pos2(self.wf_left, self.master_y),
+            egui::vec2(self.wf_width, self.wf_height),
+        );
+        let toggle_resp = ui
+            .interact(
+                display_rect,
+                egui::Id::new("output_display_toggle"),
+                egui::Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("Click to toggle waveform / spectrum");
+        if toggle_resp.clicked() {
+            set_display_mode(ui.ctx(), self.display_mode.toggled());
+        }
+
         let painter = ui.painter();
         draw_inset_display(
             painter,
@@ -190,23 +251,82 @@ impl<'a> MasterRow<'a> {
             self.wf_width,
             self.wf_height,
         );
+        let mode_label = match self.display_mode {
+            DisplayMode::Waveform => "OUTPUT",
+            DisplayMode::Spectrum => "SPECTRUM",
+        };
         painter.text(
             egui::pos2(self.wf_left + 4.0, self.master_y + 3.0),
             egui::Align2::LEFT_TOP,
-            "OUTPUT",
+            mode_label,
             egui::FontId::new(6.0, egui::FontFamily::Monospace),
             theme::RED_GHOST,
         );
-        if !self.waveform_peaks.is_empty() {
-            let n = self.waveform_peaks.len();
-            let mid_y = self.master_y + self.wf_height / 2.0;
-            for (i, &peak) in self.waveform_peaks.iter().enumerate() {
-                let x = self.wf_left + 2.0 + (i as f32 / n as f32) * (self.wf_width - 4.0);
-                let amp = peak.min(1.0) * self.wf_height * 0.42;
-                painter.line_segment(
-                    [egui::pos2(x, mid_y - amp), egui::pos2(x, mid_y + amp)],
-                    egui::Stroke::new(1.2, theme::RED_WAVEFORM),
-                );
+        match self.display_mode {
+            DisplayMode::Waveform => {
+                if !self.waveform_peaks.is_empty() {
+                    let n = self.waveform_peaks.len();
+                    let mid_y = self.master_y + self.wf_height / 2.0;
+                    for (i, &peak) in self.waveform_peaks.iter().enumerate() {
+                        let x = self.wf_left
+                            + 2.0
+                            + (i as f32 / n as f32) * (self.wf_width - 4.0);
+                        let amp = peak.min(1.0) * self.wf_height * 0.475;
+                        painter.line_segment(
+                            [
+                                egui::pos2(x, mid_y - amp),
+                                egui::pos2(x, mid_y + amp),
+                            ],
+                            egui::Stroke::new(1.2, theme::RED_WAVEFORM),
+                        );
+                    }
+                }
+            }
+            DisplayMode::Spectrum => {
+                // Leave ~10 px at the top clear for the GR overlay + label;
+                // bars grow up from `bars_bottom` toward `bars_top`.
+                let bars_bottom = self.master_y + self.wf_height - 2.0;
+                let bars_top = self.master_y + 10.0;
+                let plot_h = (bars_bottom - bars_top).max(1.0);
+                let db_span = DB_CEIL - DB_FLOOR; // 60 dB
+                let usable_w = (self.wf_width - 4.0).max(1.0);
+                let bar_slot = usable_w / SPECTRUM_BINS as f32;
+                // 1 px gap between bars if the slot is wide enough; otherwise
+                // draw a flush 1 px bar so low-width displays still render.
+                let bar_w = (bar_slot - 1.0).max(1.0);
+                for i in 0..SPECTRUM_BINS {
+                    let db = self.spectrum_bins[i].clamp(DB_FLOOR, DB_CEIL);
+                    let norm = ((db - DB_FLOOR) / db_span).clamp(0.0, 1.0);
+                    let x = self.wf_left + 2.0 + i as f32 * bar_slot;
+                    let h = norm * plot_h;
+                    if h > 0.5 {
+                        painter.rect_filled(
+                            egui::Rect::from_min_size(
+                                egui::pos2(x, bars_bottom - h),
+                                egui::vec2(bar_w, h),
+                            ),
+                            0.0,
+                            theme::RED_WAVEFORM,
+                        );
+                    }
+
+                    // Peak-hold dot — a 1.2 px slab at the current hold level.
+                    let hold_db =
+                        self.spectrum_peak_hold[i].clamp(DB_FLOOR, DB_CEIL);
+                    let hold_norm =
+                        ((hold_db - DB_FLOOR) / db_span).clamp(0.0, 1.0);
+                    if hold_norm > (norm + 0.005) {
+                        let hold_y = bars_bottom - hold_norm * plot_h;
+                        painter.rect_filled(
+                            egui::Rect::from_min_size(
+                                egui::pos2(x, hold_y),
+                                egui::vec2(bar_w, 1.2),
+                            ),
+                            0.0,
+                            theme::RED_LED,
+                        );
+                    }
+                }
             }
         }
 

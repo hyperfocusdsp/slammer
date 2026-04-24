@@ -2,6 +2,40 @@
 
 All notable changes to Slammer are documented here.
 
+## [0.5.0] — 2026-04-24
+
+### Added
+
+- **Spectrum-analyzer view on the OUTPUT display.** Click the display to
+  toggle between the rolling waveform and a 64-band log-frequency spectrum
+  (20 Hz → 20 kHz, -60 → 0 dB). The label swaps `OUTPUT ↔ SPECTRUM` so you
+  always know which mode you're in. Peak-hold dots per band decay over
+  ~500 ms, so transients stay readable after they pass — useful when tuning
+  a kick's harmonic content. Mode is sticky across widget rebuilds within
+  a DAW session (egui `Memory`) and resets on full project reopen.
+
+  Under the hood: a 1024-point Hann-windowed real FFT (`realfft 3.5`) runs
+  on the audio thread every ~21 ms at 48 kHz. All buffers are pre-allocated
+  in `initialize()`; `process()` allocates nothing new (verified under
+  `assert_process_allocs`). Bin magnitudes publish to the GUI via a
+  lock-free `[AtomicU32; 64]`, mirroring the existing `MeterShared` pattern
+  — no mutex, no drop-path allocations to worry about.
+
+### Changed
+
+- **Waveform now fills the OUTPUT display vertically.** Previous scaling
+  capped at 42% of display height so a full-scale kick looked mid-volume;
+  bumped to 95% of available height, proportional throughout. Quieter
+  signals still scale proportionally smaller (the OUTPUT display is an
+  honest meter, not auto-normalized).
+
+### Unaffected by this release
+
+- Windows WASAPI auto-probe (`src/windows_standalone.rs`) and macOS
+  standalone period-size workaround (`scripts/slammer-macos.sh`) are
+  untouched. The spectrum feed is per-sample inside the existing process
+  loop, so buffer size and backend negotiation are unchanged.
+
 ## [0.4.5] — 2026-04-22
 
 ### Fixes

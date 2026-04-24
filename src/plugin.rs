@@ -9,13 +9,14 @@ use std::sync::Arc;
 use crate::dsp::dj_filter::DjFilter;
 use crate::dsp::engine::KickEngine;
 use crate::dsp::master_bus::MasterBus;
+use crate::dsp::spectrum::SpectrumAnalyzer;
 use crate::dsp::tube::TubeWarmth;
 use crate::logging;
 use crate::params::{collect_kick_params, SlammerParams};
 use crate::presets::PresetManager;
 use crate::sequencer::{self, Sequencer};
 use crate::util::messages::{self, UiToDsp};
-use crate::util::telemetry::{self, MeterShared, TelemetryProducer};
+use crate::util::telemetry::{self, MeterShared, SpectrumShared, TelemetryProducer};
 
 use std::sync::atomic::Ordering;
 
@@ -33,6 +34,12 @@ pub struct Slammer {
     pub telemetry_rx_holder: Option<telemetry::TelemetryConsumer>,
     /// Lock-free GR meter state shared with the editor.
     pub meter_shared: Arc<MeterShared>,
+    /// Lock-free spectrum-bin state shared with the editor (64 log-spaced
+    /// dB bands). Audio thread writes on FFT completion; GUI reads per frame.
+    pub spectrum_shared: Arc<SpectrumShared>,
+    /// FFT analyzer owned by the audio thread. Fed every sample; publishes
+    /// to `spectrum_shared` once per FFT_SIZE samples.
+    spectrum: SpectrumAnalyzer,
     /// UI → DSP ring. The audio thread owns the consumer; the editor thread
     /// takes the producer when `editor()` is called. Wrapped in `Mutex<Option>`
     /// purely so ownership can move once at editor init — it is never locked
@@ -73,6 +80,8 @@ impl Default for Slammer {
             telemetry_tx: Some(telem_tx),
             telemetry_rx_holder: Some(telem_rx),
             meter_shared: MeterShared::new(),
+            spectrum_shared: SpectrumShared::new(),
+            spectrum: SpectrumAnalyzer::new(44100.0),
             ui_tx_holder: Arc::new(Mutex::new(Some(ui_tx))),
             ui_rx,
             preset_manager: Arc::new(Mutex::new(PresetManager::new())),
@@ -118,6 +127,7 @@ impl Plugin for Slammer {
         let preset_manager = Arc::clone(&self.preset_manager);
         let sequencer = Arc::clone(&self.sequencer);
         let meter = Arc::clone(&self.meter_shared);
+        let spectrum = Arc::clone(&self.spectrum_shared);
         crate::ui::editor::create(
             self.params.editor_state.clone(),
             params,
@@ -126,6 +136,7 @@ impl Plugin for Slammer {
             preset_manager,
             sequencer,
             meter,
+            spectrum,
         )
     }
 
@@ -145,6 +156,10 @@ impl Plugin for Slammer {
         self.engine.set_sample_rate(self.sample_rate);
         self.master_bus.prepare(self.sample_rate);
         self.dj_filter.set_sample_rate(self.sample_rate);
+        // Recompute log-spaced FFT band edges for the new rate and clear the
+        // ring so stale samples from a different rate don't leak into the
+        // next spectrum.
+        self.spectrum.set_sample_rate(self.sample_rate);
         // nih-plug has already deserialized `params.seq_steps` at this
         // point; copy the bitmask into the sequencer atomics so the first
         // `process()` call sees the restored pattern.
@@ -380,6 +395,17 @@ impl Plugin for Slammer {
                 let gr = self.master_bus.last_gr_db();
                 if gr > max_gr_db {
                     max_gr_db = gr;
+                }
+
+                // Feed the spectrum analyzer with the mono sum of the final
+                // post-gain output. `feed_sample` returns true once per
+                // FFT_SIZE (1024) samples, at which point we publish the
+                // fresh dB-per-band array to the GUI via 64 relaxed atomic
+                // stores — no mutex, no heap, nothing that can trip
+                // `assert_process_allocs`.
+                let mono = 0.5 * (ol + or_);
+                if self.spectrum.feed_sample(mono) {
+                    self.spectrum_shared.store_bins(self.spectrum.bins_db());
                 }
             }
 
