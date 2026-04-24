@@ -20,6 +20,30 @@ use crate::util::telemetry::{self, MeterShared, SpectrumShared, TelemetryProduce
 
 use std::sync::atomic::Ordering;
 
+/// Final-stage safety clipper applied per-sample after master volume,
+/// before the output buffer. Signals below `SC_THRESHOLD` pass through
+/// unchanged (bit-identical passthrough for normal-loudness material);
+/// signals above roll off smoothly via `tanh` and asymptote to
+/// `SC_CEILING` without ever reaching it. This prevents the DAC from
+/// hard-clipping when a preset pushes internal gain above 0 dBFS and
+/// the user's macro-comp / limiter is disengaged (the default state,
+/// where the entire master-bus chain is bypassed per the gate in the
+/// per-sample loop below).
+const SC_THRESHOLD: f32 = 0.85;
+const SC_CEILING: f32 = 0.999;
+const SC_KNEE: f32 = SC_CEILING - SC_THRESHOLD;
+
+#[inline(always)]
+fn soft_clip_safety(x: f32) -> f32 {
+    let a = x.abs();
+    if a < SC_THRESHOLD {
+        x
+    } else {
+        let over = a - SC_THRESHOLD;
+        x.signum() * (SC_THRESHOLD + SC_KNEE * (over / SC_KNEE).tanh())
+    }
+}
+
 pub struct Slammer {
     params: Arc<SlammerParams>,
     engine: KickEngine,
@@ -377,8 +401,8 @@ impl Plugin for Slammer {
                     (wl, wr)
                 };
 
-                let ol = fl * master_gain;
-                let or_ = fr * master_gain;
+                let ol = soft_clip_safety(fl * master_gain);
+                let or_ = soft_clip_safety(fr * master_gain);
                 if ol.is_finite() && or_.is_finite() {
                     *l = ol;
                     *r = or_;
@@ -455,6 +479,86 @@ impl Vst3Plugin for Slammer {
 mod tests {
     use super::*;
     use crate::dsp::engine::KickParams;
+
+    #[test]
+    fn soft_clip_safety_passes_through_below_threshold() {
+        // Anything under SC_THRESHOLD must be bit-identical to input so
+        // normal-loudness material is untouched.
+        for x in [-0.84f32, -0.5, -0.1, 0.0, 0.1, 0.5, 0.84] {
+            assert_eq!(soft_clip_safety(x), x);
+        }
+    }
+
+    #[test]
+    fn soft_clip_safety_stays_within_full_scale_at_extremes() {
+        // The DAC hard-clips at ±1.0 in f32→i16/i24 conversion. The
+        // safety stage's job is to keep output inside that box for any
+        // finite input — tanh asymptotes to SC_CEILING (0.999) but in
+        // f32 arithmetic large inputs round up to exactly SC_CEILING,
+        // which is still well under 1.0.
+        for x in [1.0f32, 2.0, 10.0, 100.0, -1.0, -2.0, -10.0, -100.0] {
+            let y = soft_clip_safety(x);
+            assert!(y.abs() <= SC_CEILING, "soft_clip({}) = {} > ceiling", x, y);
+            assert!(y.abs() < 1.0, "soft_clip({}) = {} would clip DAC", x, y);
+        }
+    }
+
+    #[test]
+    fn soft_clip_safety_is_odd_and_continuous_across_threshold() {
+        // sign symmetry
+        assert_eq!(soft_clip_safety(0.9), -soft_clip_safety(-0.9));
+        // continuity at threshold — left-limit and right-limit must match
+        let below = soft_clip_safety(0.8499);
+        let above = soft_clip_safety(0.8501);
+        assert!(
+            (below - above).abs() < 1e-3,
+            "discontinuity at threshold: {} vs {}",
+            below,
+            above
+        );
+    }
+
+    /// Regression test for the v0.5.2 Windows crackling report: at default
+    /// params, engine peak ~1.07 (sub+mid+top sums above unity). The
+    /// master-bus — including the brickwall limiter — is bypassed when
+    /// comp_amount, comp_drive, and limit_on are all at their defaults,
+    /// so without the output safety clipper the DAC hard-clips. This test
+    /// drives 32 kick hits at 120 BPM through the exact default signal
+    /// path and asserts final output stays below full-scale.
+    #[test]
+    fn output_never_exceeds_full_scale_at_default_preset() {
+        let sr = 48_000.0f32;
+        let params = KickParams::default();
+        let mut engine = KickEngine::new(sr);
+
+        let samples_per_hit = (sr * 60.0 / 120.0 / 4.0) as usize; // 16th @ 120 BPM
+        let total_hits = 32usize;
+        let total_samples = samples_per_hit * total_hits;
+        let mut l = vec![0.0f32; total_samples];
+        let mut r = vec![0.0f32; total_samples];
+
+        for hit in 0..total_hits {
+            engine.trigger(&params);
+            let start = hit * samples_per_hit;
+            let end = start + samples_per_hit;
+            engine.process(&mut l[start..end], &mut r[start..end], &params);
+        }
+
+        // Mirror plugin.rs per-sample loop with defaults: master_bus bypassed
+        // (amount=0, drive=0, limit_on=false), DJ filter off, warmth off,
+        // master_gain=1.0. Apply soft_clip_safety as the final stage.
+        let master_gain = 1.0f32;
+        let mut final_peak = 0.0f32;
+        for i in 0..total_samples {
+            let ol = soft_clip_safety(l[i] * master_gain);
+            final_peak = final_peak.max(ol.abs());
+        }
+
+        assert!(
+            final_peak < SC_CEILING,
+            "final output peak {final_peak} reached/exceeded ceiling {SC_CEILING}"
+        );
+    }
 
     /// Integration test: exercise the full master chain (engine → NaN guard →
     /// comp → warmth → DJ filter → master gain) and verify the output is

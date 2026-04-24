@@ -2,6 +2,23 @@
 
 All notable changes to Slammer are documented here.
 
+## [0.5.2] — 2026-04-24
+
+### Fixed
+
+- **Output safety clipper prevents DAC crackling on loud presets.** At
+  default plugin state the master-bus chain — including the brickwall
+  limiter — was bypassed (comp off, drive off, limiter-toggle off), so
+  the engine's natural peak (~+0.6 dBFS on default params, higher with
+  low-boost EQ or master-volume above unity) went straight to the audio
+  device unclipped. On managed Windows / WASAPI setups this manifested
+  as hit-to-hit crackling that disappeared when the master volume was
+  trimmed below -0.5 dB. A final per-sample soft-clip stage now runs
+  after master volume with a `tanh`-asymptoted ceiling at -0.009 dBFS:
+  signals below -1.4 dBFS pass through bit-identical, signals above
+  smoothly roll off and never reach full-scale. Loud presets still
+  sound loud; they just don't hard-clip the converter anymore.
+
 ## [0.5.1] — 2026-04-24
 
 ### Fixed
