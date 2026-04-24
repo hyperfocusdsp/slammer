@@ -108,9 +108,9 @@ impl KickVoice {
         self.fadeout_step = 0.0;
         self.triggered = true;
 
-        // Analog drift: per-trigger pitch + phase jitter
-        let (sub_pf, sub_pd) = drift.jitter(params.drift_amount);
-        let (mid_pf, mid_pd) = drift.jitter(params.drift_amount);
+        // Analog pitch drift (phase is always deterministic for consistent low end)
+        let sub_pf = drift.pitch_jitter(params.drift_amount);
+        let mid_pf = drift.pitch_jitter(params.drift_amount);
 
         // SUB
         self.sub_pitch_env.trigger(
@@ -120,7 +120,7 @@ impl KickVoice {
             params.sub_sweep_curve,
         );
         self.sub_amp_env.trigger(params.decay_ms);
-        self.sub_osc.trigger(params.sub_phase_offset + sub_pd);
+        self.sub_osc.trigger(params.sub_phase_offset);
 
         // MID
         self.mid_pitch_env.trigger(
@@ -130,7 +130,7 @@ impl KickVoice {
             params.mid_sweep_curve,
         );
         self.mid_amp_env.trigger(params.mid_decay_ms);
-        self.mid_osc.trigger(params.mid_phase_offset + mid_pd);
+        self.mid_osc.trigger(params.mid_phase_offset);
         self.mid_noise.trigger();
 
         // TOP
@@ -529,6 +529,31 @@ impl Default for KickParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sub_phase_deterministic_at_max_drift() {
+        // With drift_amount=1.0, two identical triggers must produce identical
+        // SUB-layer phase on sample 0. Isolate the sub by zeroing mid/top/clap.
+        let params = KickParams {
+            drift_amount: 1.0,
+            mid_gain: 0.0,
+            top_gain: 0.0,
+            clap_on: false,
+            ..KickParams::default()
+        };
+        let mut e1 = KickEngine::new(44100.0);
+        let mut e2 = KickEngine::new(44100.0);
+        e1.trigger(&params);
+        e2.trigger(&params);
+        let (mut l1, mut r1) = (vec![0.0f32; 1], vec![0.0f32; 1]);
+        let (mut l2, mut r2) = (vec![0.0f32; 1], vec![0.0f32; 1]);
+        e1.process(&mut l1, &mut r1, &params);
+        e2.process(&mut l2, &mut r2, &params);
+        assert_eq!(
+            l1[0], l2[0],
+            "sub phase must be deterministic on trigger regardless of drift"
+        );
+    }
 
     #[test]
     fn trigger_produces_nonzero_output() {

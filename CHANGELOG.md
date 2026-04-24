@@ -2,6 +2,19 @@
 
 All notable changes to Slammer are documented here.
 
+## [0.5.1] — 2026-04-24
+
+### Fixed
+
+- **Sub / mid oscillators now phase-lock on every trigger.** Previously the
+  `Drift` knob added ±8.6° of random phase offset to the SUB and MID
+  oscillators at trigger time, causing identical MIDI hits to produce
+  audibly inconsistent low-end level (constructive vs destructive summing
+  against decaying tails and kick-bass interactions in a mix). Trigger
+  phase is now deterministic, matching the gated-VCO behaviour of analog
+  kick circuits. The `Drift` knob still controls ±14 cents of analog
+  pitch drift — that's the part that makes a kick sound analog.
+
 ## [0.5.0] — 2026-04-24
 
 ### Added
