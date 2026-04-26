@@ -160,3 +160,49 @@ pub fn param_knob(
     }
     changed
 }
+
+/// Compact-layout variant of `param_knob` for dense clusters (e.g. the
+/// stacked sub-rows in the v0.6.0 SAT/CLIP cluster). Identical
+/// param-binding behaviour; visually the knob renders with tighter
+/// surrounding padding and the label sits flush against the knob box.
+///
+/// `label` is the abbreviation rendered under the knob (≤ 4 chars
+/// recommended so it fits on one line at 9.5 pt mono in the compact
+/// column). `tooltip` is the long-form description shown on hover.
+#[allow(clippy::too_many_arguments)]
+pub fn param_knob_compact(
+    ui: &mut egui::Ui,
+    setter: &ParamSetter,
+    id: &str,
+    label: &str,
+    tooltip: &str,
+    param: &FloatParam,
+    min: f32,
+    max: f32,
+    default: f32,
+    format_value: impl Fn(f32) -> String,
+    diameter: f32,
+    core_color: egui::Color32,
+) -> bool {
+    let mut val = param.value();
+    let changed = knob::knob_compact(
+        ui,
+        egui::Id::new(id),
+        &mut val,
+        min,
+        max,
+        default,
+        label,
+        tooltip,
+        format_value,
+        diameter,
+        core_color,
+    )
+    .changed;
+    if changed {
+        setter.begin_set_parameter(param);
+        setter.set_parameter(param, val);
+        setter.end_set_parameter(param);
+    }
+    changed
+}

@@ -22,18 +22,116 @@ pub fn knob(
     diameter: f32,
     core_color: egui::Color32,
 ) -> KnobResponse {
+    knob_inner(
+        ui,
+        id,
+        value,
+        min,
+        max,
+        default,
+        label,
+        "",
+        format_value,
+        diameter,
+        core_color,
+        false,
+    )
+}
+
+/// Compact variant: tighter knob-to-label spacing for dense clusters
+/// (e.g. the v0.6.0 SAT/CLIP stacked sub-rows). Visual rendering of the
+/// knob itself is identical; only the surrounding box padding and the
+/// gap before the label shrink — saves ~9 px of vertical room per knob.
+///
+/// `tooltip` adds a hover-text bubble explaining the abbreviated label
+/// (e.g. label="CDRV" + tooltip="Voice clip drive — per-voice
+/// waveshaper amount before amp envelope"). Pass an empty string to
+/// suppress.
+#[allow(clippy::too_many_arguments)]
+pub fn knob_compact(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    value: &mut f32,
+    min: f32,
+    max: f32,
+    default: f32,
+    label: &str,
+    tooltip: &str,
+    format_value: impl Fn(f32) -> String,
+    diameter: f32,
+    core_color: egui::Color32,
+) -> KnobResponse {
+    knob_inner(
+        ui,
+        id,
+        value,
+        min,
+        max,
+        default,
+        label,
+        tooltip,
+        format_value,
+        diameter,
+        core_color,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn knob_inner(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    value: &mut f32,
+    min: f32,
+    max: f32,
+    default: f32,
+    label: &str,
+    tooltip: &str,
+    format_value: impl Fn(f32) -> String,
+    diameter: f32,
+    core_color: egui::Color32,
+    compact: bool,
+) -> KnobResponse {
     let mut result = KnobResponse {
         changed: false,
         reset: false,
     };
 
-    ui.vertical(|ui| {
-        ui.set_width(diameter + 12.0);
+    let box_pad = if compact { 4.0 } else { 12.0 };
+    let label_gap = if compact { 0.0 } else { 3.0 };
+    let total = diameter + box_pad;
+    // Compact mode keeps the knob box visually tight (≈ diameter + 4) but
+    // widens the surrounding column to ≥ 30 px so 3- and 4-character
+    // labels render on a single line without wrapping. The knob is then
+    // centred horizontally inside the wider column.
+    let column_w = if compact {
+        (diameter + 12.0).max(total)
+    } else {
+        total
+    };
 
-        let total = diameter + 12.0;
+    ui.vertical(|ui| {
+        ui.set_width(column_w);
+        if compact {
+            // Without this, the parent's `item_spacing.y` (typically 4 px in
+            // a stacked sub-row cluster) leaks into this inner vertical and
+            // adds an unwanted gap between the knob box and the label.
+            ui.spacing_mut().item_spacing.y = 0.0;
+        }
+
         let size = egui::vec2(total, total);
-        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
-        let response = response.on_hover_cursor(egui::CursorIcon::ResizeVertical);
+        let knob_alloc = ui
+            .allocate_ui_with_layout(
+                egui::vec2(column_w, total),
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| ui.allocate_exact_size(size, egui::Sense::click_and_drag()),
+            )
+            .inner;
+        let (rect, response) = knob_alloc;
+        let mut response = response.on_hover_cursor(egui::CursorIcon::ResizeVertical);
+        if !tooltip.is_empty() {
+            response = response.on_hover_text(tooltip);
+        }
 
         // Ctrl+click or double-click to reset.
         // Note: response.double_clicked() is unreliable under baseview (raw
@@ -152,7 +250,7 @@ pub fn knob(
         }
 
         // Label below
-        ui.add_space(3.0);
+        ui.add_space(label_gap);
         ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
             ui.label(
                 egui::RichText::new(label)

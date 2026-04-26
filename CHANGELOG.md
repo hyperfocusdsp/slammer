@@ -2,6 +2,162 @@
 
 All notable changes to Slammer are documented here.
 
+## [0.6.0] — 2026-04-26
+
+### Added
+
+- **Per-voice soft-clip** — new `src/dsp/voice_clip.rs` module with three
+  modes (`Tanh`, `Diode`, `Cubic`) plus pass-through `Off`. The shaper
+  sits **before** each layer's amp envelope inside `KickVoice::tick`,
+  matching the analog 909's `VCO → soft-clip → VCA` topology — so
+  harmonics are dense at attack and thin out as the layer envelope
+  closes, rather than being applied to the already-decayed mix.
+  Distinct from the existing master-bus saturation, which still runs
+  post-envelope on the summed voices.
+- **Two new params**: `kick_clip_mode` (0 Off / 1 Tanh / 2 Diode /
+  3 Cubic) and `kick_clip_drive` (0..1). Both default to 0 / 0, so
+  every v0.5.x preset loads bit-identical (`apply` short-circuits to
+  pass-through when drive ≤ 0). Persisted via the existing
+  `ParamSnapshot` round-trip with `#[serde(default)]`, so old preset
+  JSON files deserialize cleanly.
+- Factory `909` preset now ships with `kick_clip_mode = 1.0` (Tanh)
+  and `kick_clip_drive = 0.15`. Closes the largest perceptual gap
+  surfaced by the 2026-04-26 TR-909 BD audit (item 3 — per-voice
+  waveshaper before mix).
+- **MID noise gated to attack** with its own short envelope. New
+  param `mid_noise_decay_ms` (default 30 ms) runs the noise channel
+  off a separate `AmpEnvelope` instead of riding the tone's
+  `mid_amp_env`. Real 909 kicks have a short noise burst at attack
+  (15-30 ms) layered over a longer tone tail; legacy slammer let
+  noise sustain for as long as `mid_decay_ms`, which on 250-300 ms
+  tone tails turned the noise into a hiss bed instead of a snap.
+  Closes audit item 4. Factory `909` preset uses `15 ms` for that
+  signature 909 click character.
+- **Legacy preset compatibility** — `ParamSnapshot` deserialization
+  from v0.5.x JSON files leaves `mid_noise_decay_ms = 0.0`. The
+  trigger path treats anything below 1 ms as a sentinel and falls
+  back to `mid_decay_ms`, so old presets keep their original
+  sustained-noise feel until the user explicitly tunes the new knob.
+
+- **909-style Accent.** Closes audit item 7. Two new mechanisms working
+  together: a per-step accent bit on the sequencer (parallel to the
+  existing step bits, persisted via a new `seq_accents` payload) and
+  a host-automatable `accent_amount` param. When a step's accent bit
+  is set AND `accent_amount > 0`, the engine multiplies that hit's
+  `amp_scale` by `1 + 0.3·a` and `decay_scale` by `1 + 0.5·a`,
+  composing on top of the existing drift jitter. Manual triggers
+  (button, T key, MIDI note-on) always fire un-accented. UI:
+  shift-click a lit step to toggle its accent — accented steps are
+  marked by a small white tick at the bottom of the pad. Clearing a
+  step also clears its accent so the state can't outlive its host.
+  Backward-compat: v0.5.x sessions deserialize `seq_accents` to zero
+  (no accents) and `accent_amount` to 0, so no existing pattern
+  changes character.
+
+### UI
+
+- **SAT/EQ row restructured** to surface every v0.6.0 audio param. The
+  left half of the row is now a 2×4 stacked cluster: top sub-row
+  carries the existing SAT MODE LCD selector (compact variant) plus
+  small SAT DRIVE / SAT MIX knobs; bottom sub-row carries a new CLIP
+  MODE LCD selector (compact, mirroring the SAT MODE shape) plus the
+  three new v0.6.0 controls — CLIP DRIVE, MID NOISE DECAY, ACCENT —
+  all rendered in the comp-cluster small-knob style (18 px diameter).
+  The EQ cluster on the right keeps its full-size 32 px knobs and
+  vertical alignment unchanged. Row height grew by 22 px to fit the
+  stack; STEP grid and DICE shift down to follow.
+- **`lcd_selector` widget refactored** in `seven_seg.rs` to take a
+  unique `id_source`, a `modes` slice, and a `compact: bool` flag.
+  The compact variant uses 14×18 arrows + 44×16 LCD and drops the
+  trailing 8 px gap, fitting cleanly inside the new sub-row height.
+  Two selectors with distinct id sources can now coexist in the same
+  frame without egui Id collision. The CLIP MODE LCD displays
+  `OFF / tAnH / dIOdE / CUbIC` (lowercase `n` because the 7-segment
+  glyph table doesn't define uppercase N).
+
+### Fixed
+
+- **Intermittent bitcrush-style audio glitches root-caused.** Across
+  five new offline-render audit tests covering default Init, the 909
+  preset (drift + Diode sat + Tanh kick-clip), heavy 32nd-note
+  retriggering, and comp+limiter+drive+warmth all engaged, the full
+  per-sample DSP chain produces bit-clean output (max sample-to-sample
+  delta in the natural attack-ramp range, no NaN, no FFT-period
+  correlation). The remaining real-time-only artifact under load was
+  isolated to the audio-thread spectrum FFT — Slammer's spectrum
+  analyzer runs `realfft::process_with_scratch` once per 1024 samples
+  on the RT thread (Autokit on the same machine has no audio-thread
+  FFT and is glitch-free, the smoking-gun cross-plugin delta).
+
+### Diagnostics
+
+- **`SLAMMER_DISABLE_SPECTRUM` env var.** When set to a non-empty,
+  non-`0` value at plugin/standalone init, the audio thread skips
+  the spectrum FFT entirely. The OUTPUT display's bars freeze, but
+  CPU pressure on the RT thread drops to Autokit-equivalent. Cached
+  in a `bool` field, branch-predictor-friendly. v0.6.1 will replace
+  this with a click-cycle tri-state OUTPUT toggle (Normal / Bars /
+  None) and move the FFT to a worker thread so the default path
+  also no longer occupies the audio thread.
+
+### Tests
+
+- **5 new offline-render audit tests** in `plugin.rs::tests` that
+  mirror the full per-sample chain (engine + master_bus + dj_filter
+  + tube + soft-clip + spectrum FFT feed) over multi-second renders,
+  write WAVs to `/tmp/slammer_offline_*.wav` for visual inspection,
+  and assert no audible artifacts at the sample-delta level. Total
+  test count 137 → 142.
+
+## [0.5.5] — 2026-04-26
+
+### Added
+
+- **Per-trigger amplitude + decay drift.** The `Drift` knob now perturbs
+  more than pitch on each hit. A new `Drift::sample_envelope` returns
+  one `DriftSample` per trigger with `amp_scale` (±2.5%) and
+  `decay_scale` (±5%), both gated by `drift_amount`. `amp_scale`
+  multiplies the voice's tick output uniformly across SUB / MID / TOP
+  layers; `decay_scale` multiplies every amp-envelope's `decay_ms`
+  before triggering. At `drift_amount = 0` both factors are exactly
+  1.0 — deterministic v0.5.x behavior is preserved.
+- **Analog envelope-tau quantization.** `analog_quantize_tau(tau,
+  drift_amount)` snaps an envelope time-constant to ~16 levels per
+  decade, lerped in by `drift_amount`. Approximates the cap-array
+  stepping of analog envelope-generator chips: with drift engaged,
+  two slightly-different `decay_ms` settings can audibly snap to the
+  same decay because they round to the same chip step. Inaudible at
+  drift = 0; subtle character from drift ≈ 0.3 upward. Wired into
+  every `AmpEnvelope::trigger` call across the kick voice.
+
+### Changed
+
+- **Factory `909` preset rewritten** against a TR-909 BD audit
+  (reference: `BPB Cassette 909/clean/bd01.wav`). Old values were
+  stale (`decay_ms = 934 ms`, `sub_fstart = 90.8 Hz`). New values:
+  `decay_ms = 200`, `sub_fstart = 65`, `sub_fend = 50`,
+  `top_gain = 0.15`, `mid_noise_gain = 0.1`, `sat_mode = 2.0`
+  (Diode), `sat_drive = 0.1`, `drift_amount = 0.2`. The factory
+  `909-ish` and `909old` presets are unchanged for now.
+
+### Fixed
+
+- **Preset dropdown scrolls cleanly past ~12 entries.** Rewrote
+  `src/ui/preset_bar.rs` so the dropdown popup constrains paint to
+  its bounding rect, only iterates the visible window, supports
+  mouse-wheel scroll, draws a thin red-LED scrollbar thumb on the
+  right edge, and auto-scrolls so the currently-selected preset is
+  visible on open. Required because user preset count grew past the
+  original fixed-height window's capacity and the old painter-style
+  dropdown overflowed onto the knob panel below.
+- **Pointer cursor stays on the dropdown.** The knob drag-to-change
+  widget calls `set_cursor_icon(ResizeVertical)` and was winning the
+  last-write-of-the-frame race against the dropdown's PointingHand,
+  so user-preset rows showed up/down resize arrows. The fix stashes
+  the dropdown's bounding rect during `PresetBar::render` and
+  re-applies the cursor in a new `apply_late_cursor` method called
+  from `editor.rs` **after** every knob-panel draw.
+
 ## [0.5.3] — 2026-04-24
 
 ### Fixed

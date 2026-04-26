@@ -74,9 +74,10 @@ impl AmpEnvelope {
         }
     }
 
-    pub fn trigger(&mut self, decay_ms: f32) {
+    pub fn trigger(&mut self, decay_ms: f32, drift_amount: f32) {
         let decay_s = decay_ms / 1000.0;
-        self.tau = (decay_s / 6.9078).max(0.0001);
+        let raw_tau = (decay_s / 6.9078).max(0.0001);
+        self.tau = analog_quantize_tau(raw_tau, drift_amount);
         self.t = 0.0;
         self.attack_counter = 0;
         self.active = true;
@@ -110,6 +111,22 @@ impl AmpEnvelope {
     pub fn is_active(&self) -> bool {
         self.active
     }
+}
+
+/// Quantize an envelope time-constant to ~16 levels per decade, lerped in
+/// by `drift_amount`. Approximates the cap-array stepping of analog
+/// envelope-generator chips: when drift is engaged, two slightly-different
+/// `decay_ms` settings can produce the same audible decay because they
+/// snap to the same chip step. At `drift_amount = 0.0` this returns `tau`
+/// unchanged — backward-compatible with v0.5.x behavior.
+pub fn analog_quantize_tau(tau: f32, drift_amount: f32) -> f32 {
+    if drift_amount <= 0.0 || tau <= 0.0 {
+        return tau;
+    }
+    let log_tau = tau.log10();
+    let stepped_log = (log_tau * 16.0).round() / 16.0;
+    let stepped = 10.0_f32.powf(stepped_log);
+    tau + (stepped - tau) * drift_amount
 }
 
 #[cfg(test)]
@@ -169,7 +186,7 @@ mod tests {
     #[test]
     fn amp_env_has_attack_ramp() {
         let mut env = AmpEnvelope::new(44100.0);
-        env.trigger(200.0);
+        env.trigger(200.0, 0.0);
         let first = env.tick();
         // First sample should be near zero (start of 1ms ramp), not 1.0
         assert!(first < 0.1, "expected ramp start near 0, got {}", first);
@@ -178,7 +195,7 @@ mod tests {
     #[test]
     fn amp_env_60db_at_decay_ms() {
         let mut env = AmpEnvelope::new(44100.0);
-        env.trigger(100.0);
+        env.trigger(100.0, 0.0);
         let samples = (0.1 * 44100.0) as usize;
         let mut gain = 1.0;
         for _ in 0..samples {
@@ -190,7 +207,7 @@ mod tests {
     #[test]
     fn amp_env_monotonic_after_attack() {
         let mut env = AmpEnvelope::new(44100.0);
-        env.trigger(200.0);
+        env.trigger(200.0, 0.0);
         // Skip attack phase
         for _ in 0..50 {
             env.tick();
@@ -207,5 +224,43 @@ mod tests {
     fn amp_env_inactive_returns_zero() {
         let env = AmpEnvelope::new(44100.0);
         assert!(!env.is_active());
+    }
+
+    #[test]
+    fn analog_quantize_tau_is_identity_at_zero_drift() {
+        let tau = 0.0289;
+        assert_eq!(analog_quantize_tau(tau, 0.0), tau);
+    }
+
+    #[test]
+    fn analog_quantize_tau_steps_at_full_drift() {
+        // Two taus inside the same log-bucket (the -25/16 step centred at
+        // 10^(-25/16) ≈ 0.0274) must snap to the same level when
+        // drift_amount = 1.0. 0.0270 and 0.0280 both round to that bucket.
+        let a = analog_quantize_tau(0.0270, 1.0);
+        let b = analog_quantize_tau(0.0280, 1.0);
+        assert!(
+            (a - b).abs() < 1e-6,
+            "same-bucket taus did not snap together: {} vs {}",
+            a,
+            b
+        );
+    }
+
+    #[test]
+    fn analog_quantize_tau_lerps_with_drift_amount() {
+        let raw = 0.0290;
+        let mid = analog_quantize_tau(raw, 0.5);
+        let full = analog_quantize_tau(raw, 1.0);
+        // Mid-drift should sit between raw and fully-stepped value.
+        let lo = raw.min(full);
+        let hi = raw.max(full);
+        assert!(
+            mid >= lo - 1e-6 && mid <= hi + 1e-6,
+            "mid={} not between raw={} and full={}",
+            mid,
+            raw,
+            full
+        );
     }
 }

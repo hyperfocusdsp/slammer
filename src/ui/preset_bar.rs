@@ -16,6 +16,12 @@ use crate::presets::{PresetEntry, PresetManager};
 use crate::ui::theme;
 use crate::ui::widgets::{draw_inset_display, preset_arrow_btn};
 
+// Dropdown geometry constants. Single source of truth — used by both the
+// renderer and the visible-rows helper so scroll math and paint stay in sync.
+const DD_MAX_H: f32 = 200.0;
+const DD_ITEM_H: f32 = 18.0;
+const DD_PAD: f32 = 3.0;
+
 /// Mutable UI state for the preset bar.
 struct PresetBarState {
     /// Currently loaded preset name.
@@ -28,6 +34,10 @@ struct PresetBarState {
     edit_buffer: String,
     /// Whether the preset dropdown is open.
     dropdown_open: bool,
+    /// Top-of-list scroll offset in rows. 0 = no scroll. Clamped to
+    /// `cached.len() - visible_rows` whenever it's read so it stays valid
+    /// across preset count changes (save/delete/refresh).
+    dd_scroll: usize,
     /// Status message shown briefly after save/delete/error.
     status_msg: String,
     status_timer: f32,
@@ -41,6 +51,7 @@ impl Default for PresetBarState {
             editing: false,
             edit_buffer: String::new(),
             dropdown_open: false,
+            dd_scroll: 0,
             status_msg: String::new(),
             status_timer: 0.0,
         }
@@ -51,6 +62,11 @@ impl Default for PresetBarState {
 pub struct PresetBar {
     state: PresetBarState,
     cached: Vec<PresetEntry>,
+    /// Frame-scratch: the dropdown's bounding rect when it's currently open,
+    /// captured during `render` and consumed by `apply_late_cursor` after the
+    /// central panel's knob draws complete. Cleared at the start of every
+    /// `render` so a closed dropdown leaves no stale rect behind.
+    last_open_dd_rect: Option<egui::Rect>,
 }
 
 impl PresetBar {
@@ -63,6 +79,23 @@ impl PresetBar {
         Self {
             state: PresetBarState::default(),
             cached,
+            last_open_dd_rect: None,
+        }
+    }
+
+    /// Re-apply PointingHand cursor over the dropdown's bounding rect, as
+    /// the **last** cursor-set of the frame. Must be called from `editor.rs`
+    /// **after** all knob-panel draws — the knob drag-to-change widget calls
+    /// `set_cursor_icon(ResizeVertical)` and last-write wins, so an override
+    /// inside `render_dropdown` is overwritten by the panels rendered later.
+    /// No-op when the dropdown is closed.
+    pub fn apply_late_cursor(&self, ui: &egui::Ui) {
+        if let Some(rect) = self.last_open_dd_rect {
+            if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                if rect.contains(pos) {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+            }
         }
     }
 
@@ -70,6 +103,45 @@ impl PresetBar {
         let mut mgr = pm.lock();
         mgr.refresh();
         self.cached = mgr.list_all();
+        // Clamp scroll — preset count may have shrunk (delete) or grown
+        // (save), and a stale offset would either skip rows or reveal blank
+        // space at the bottom.
+        let visible = Self::dropdown_visible_rows();
+        let max_scroll = self.cached.len().saturating_sub(visible);
+        self.state.dd_scroll = self.state.dd_scroll.min(max_scroll);
+    }
+
+    /// How many rows fit in the dropdown's max-height area at default
+    /// constants. Subtracts the top+bottom padding from the cap.
+    fn dropdown_visible_rows() -> usize {
+        ((DD_MAX_H - 2.0 * DD_PAD) / DD_ITEM_H).floor() as usize
+    }
+
+    /// Open the dropdown and scroll so the selected entry is visible. If
+    /// the selected index is below the would-be window, anchor the window
+    /// to put it on the last row; otherwise reset to top.
+    fn open_dropdown(&mut self) {
+        let visible = Self::dropdown_visible_rows();
+        let total = self.cached.len();
+        let sel = self.state.selected_index;
+        self.state.dd_scroll = if total <= visible {
+            0
+        } else if sel >= visible {
+            (sel + 1).saturating_sub(visible).min(total - visible)
+        } else {
+            0
+        };
+        self.state.dropdown_open = true;
+    }
+
+    /// Toggle the dropdown — opening reuses `open_dropdown` so scroll
+    /// always lands on the selected entry, closing is a plain flip.
+    fn toggle_dropdown(&mut self) {
+        if self.state.dropdown_open {
+            self.state.dropdown_open = false;
+        } else {
+            self.open_dropdown();
+        }
     }
 
     /// Point the selection at an entry by name (used when restoring the
@@ -102,6 +174,10 @@ impl PresetBar {
         header_center_y: f32,
         dt_seconds: f32,
     ) {
+        // Clear the previous frame's dropdown rect so a freshly-closed
+        // dropdown stops claiming the cursor on the next frame.
+        self.last_open_dd_rect = None;
+
         let display_w = 130.0;
         let display_h = 16.0;
         let arrow_size = 16.0;
@@ -411,7 +487,7 @@ impl PresetBar {
         }
         let led_resp = ui.interact(led_rect, egui::Id::new("preset_led"), egui::Sense::click());
         if led_resp.clicked() {
-            self.state.dropdown_open = !self.state.dropdown_open;
+            self.toggle_dropdown();
         }
     }
 
@@ -425,18 +501,40 @@ impl PresetBar {
         selected_name: &str,
     ) {
         let dd_width = display_w.max(160.0);
-        let dd_max_h = 200.0;
-        let dd_item_h = 18.0;
-        let dd_h = (self.cached.len() as f32 * dd_item_h + 6.0).min(dd_max_h);
+        let total = self.cached.len();
+        let visible_rows = Self::dropdown_visible_rows();
+        let scrollable = total > visible_rows;
+
+        // Clamp the persisted scroll offset on every frame — handles the
+        // case where presets shrank since the dropdown was opened.
+        let max_scroll = total.saturating_sub(visible_rows);
+        self.state.dd_scroll = self.state.dd_scroll.min(max_scroll);
+        let scroll = self.state.dd_scroll;
+        let end = (scroll + visible_rows).min(total);
+        let rows_shown = end - scroll;
+
+        let dd_h = if scrollable {
+            DD_MAX_H
+        } else {
+            rows_shown as f32 * DD_ITEM_H + 2.0 * DD_PAD
+        };
         let dd_rect = egui::Rect::from_min_size(
             egui::pos2(led_rect.left(), led_rect.bottom() + 2.0),
             egui::vec2(dd_width, dd_h),
         );
 
-        let fg_painter = ui.painter().clone().with_layer_id(egui::LayerId::new(
-            egui::Order::Foreground,
-            egui::Id::new("preset_dropdown_layer"),
-        ));
+        // Clip the painter to dd_rect so any geometry miscount can't leak
+        // into the knob panel below — this is the load-bearing line for the
+        // bug fix. Without it, a stray paint outside dd_rect corrupts
+        // surrounding UI.
+        let fg_painter = ui
+            .painter()
+            .clone()
+            .with_layer_id(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("preset_dropdown_layer"),
+            ))
+            .with_clip_rect(dd_rect);
         fg_painter.rect_filled(dd_rect, 2.0, egui::Color32::from_rgb(0x12, 0x12, 0x12));
         fg_painter.rect_stroke(
             dd_rect,
@@ -446,10 +544,18 @@ impl PresetBar {
         );
 
         let factory_count = self.cached.iter().filter(|e| e.is_factory).count();
-        let mut item_y = dd_rect.top() + 3.0;
+        let mut item_y = dd_rect.top() + DD_PAD;
         let mut clicked: Option<(usize, PresetEntry)> = None;
 
-        for (idx, entry) in self.cached.iter().enumerate() {
+        // Iterate only the visible window. `visible_idx` is the row position
+        // inside the popup (0..rows_shown); `idx` is the absolute index into
+        // `self.cached` and the persistent egui Id for hit-detection.
+        for visible_idx in 0..rows_shown {
+            let idx = scroll + visible_idx;
+            let entry = &self.cached[idx];
+
+            // Factory→user separator: only draw if the boundary falls inside
+            // the visible window. Eats DD_PAD vertical space when shown.
             if !entry.is_factory && idx == factory_count {
                 fg_painter.line_segment(
                     [
@@ -458,12 +564,12 @@ impl PresetBar {
                     ],
                     egui::Stroke::new(1.0, egui::Color32::from_rgb(0x33, 0x33, 0x33)),
                 );
-                item_y += 3.0;
+                item_y += DD_PAD;
             }
 
             let item_rect = egui::Rect::from_min_size(
                 egui::pos2(dd_rect.left(), item_y),
-                egui::vec2(dd_width, dd_item_h),
+                egui::vec2(dd_width, DD_ITEM_H),
             );
 
             let label = if entry.is_factory {
@@ -472,11 +578,13 @@ impl PresetBar {
                 format!("* {}", entry.name)
             };
 
-            let item_resp = ui.interact(
-                item_rect,
-                egui::Id::new(format!("dd_{idx}")),
-                egui::Sense::click(),
-            );
+            let item_resp = ui
+                .interact(
+                    item_rect,
+                    egui::Id::new(format!("dd_{idx}")),
+                    egui::Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
             let is_sel = entry.name == selected_name;
             let color = if is_sel || item_resp.hovered() {
                 theme::RED_LED
@@ -502,7 +610,58 @@ impl PresetBar {
                 clicked = Some((idx, entry.clone()));
             }
 
-            item_y += dd_item_h;
+            item_y += DD_ITEM_H;
+        }
+
+        // Mouse-wheel scroll when the pointer is over the dropdown. egui's
+        // smooth_scroll_delta.y is positive when scrolling up — convert to
+        // a signed row delta and clamp to [0, max_scroll].
+        if scrollable {
+            if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                if dd_rect.contains(pos) {
+                    let dy = ui.input(|i| i.smooth_scroll_delta.y);
+                    if dy != 0.0 {
+                        let new_scroll = (self.state.dd_scroll as f32 - dy / DD_ITEM_H)
+                            .max(0.0)
+                            .min(max_scroll as f32);
+                        let rounded = new_scroll.round() as usize;
+                        if rounded != self.state.dd_scroll {
+                            self.state.dd_scroll = rounded;
+                            ui.ctx().request_repaint();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Thin scrollbar on the right edge — graphite track, red-LED thumb,
+        // proportional height + position. Only drawn when scrolling matters.
+        if scrollable {
+            let track_x = dd_rect.right() - 4.0;
+            let track_top = dd_rect.top() + DD_PAD;
+            let track_bot = dd_rect.bottom() - DD_PAD;
+            fg_painter.line_segment(
+                [
+                    egui::pos2(track_x, track_top),
+                    egui::pos2(track_x, track_bot),
+                ],
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(0x33, 0x33, 0x33)),
+            );
+            let track_h = track_bot - track_top;
+            let thumb_h = (track_h * visible_rows as f32 / total as f32).max(8.0);
+            let thumb_top = if max_scroll == 0 {
+                track_top
+            } else {
+                track_top + (track_h - thumb_h) * (scroll as f32 / max_scroll as f32)
+            };
+            fg_painter.rect_filled(
+                egui::Rect::from_min_size(
+                    egui::pos2(track_x - 1.0, thumb_top),
+                    egui::vec2(2.0, thumb_h),
+                ),
+                1.0,
+                theme::RED_LED,
+            );
         }
 
         if let Some((idx, entry)) = clicked {
@@ -513,7 +672,7 @@ impl PresetBar {
             crate::presets::save_last_preset_name(&entry.name);
         }
 
-        // Close dropdown if clicking outside the dropdown rect
+        // Close dropdown if clicking outside the dropdown rect.
         if ui.input(|i| i.pointer.any_click()) {
             if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
                 if !dd_rect.contains(pos) && !led_rect.contains(pos) {
@@ -521,6 +680,12 @@ impl PresetBar {
                 }
             }
         }
+
+        // Stash the dropdown rect for `apply_late_cursor` to re-set the
+        // cursor after the knob panels render. Setting cursor here doesn't
+        // stick — knob widgets later in the frame call `set_cursor_icon`
+        // and last-write wins. Reset to None at the top of `render`.
+        self.last_open_dd_rect = Some(dd_rect);
     }
 
     fn commit_save(

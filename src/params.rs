@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::dsp::engine::KickParams;
-use crate::sequencer::DEFAULT_STEP_BITS;
+use crate::sequencer::{DEFAULT_ACCENT_BITS, DEFAULT_STEP_BITS};
 
 // ---------------------------------------------------------------------------
 // Param-builder helpers
@@ -101,6 +101,13 @@ pub struct SlammerParams {
     #[persist = "seq_steps"]
     pub seq_steps: Arc<Mutex<u16>>,
 
+    /// 909-style accent bits, parallel to `seq_steps`. v0.5.x sessions
+    /// have no `seq_accents` payload; nih-plug deserialization falls back
+    /// to the field's `Default` (zero), so old patterns load with no
+    /// accents marked — backward-compatible.
+    #[persist = "seq_accents"]
+    pub seq_accents: Arc<Mutex<u16>>,
+
     /// Editor display scale: `1.0`, `1.5`, or `2.0`. The footer "UI N×"
     /// badge cycles this value and mirrors it to a sidecar file (see
     /// `util::paths::save_ui_scale`). nih-plug serialises it inside DAW
@@ -168,6 +175,12 @@ pub struct SlammerParams {
     #[id = "mid_noise_col"]
     pub mid_noise_color: FloatParam,
 
+    /// Decay time for the MID noise channel's own envelope. Real 909 kicks
+    /// gate noise to a short attack burst (15-30 ms); legacy slammer ran
+    /// noise off `mid_decay_ms` so it sustained alongside the tone.
+    #[id = "mid_noise_dec"]
+    pub mid_noise_decay_ms: FloatParam,
+
     // --- TOP layer ---
     #[id = "top_gain"]
     pub top_gain: FloatParam,
@@ -188,6 +201,12 @@ pub struct SlammerParams {
     #[id = "drift"]
     pub drift_amount: FloatParam,
 
+    /// 909-style accent gain. At 0 the per-step accent flag is a no-op;
+    /// at 1 an accented hit is ~30% louder and decays ~50% longer. The
+    /// per-step flag itself is in the sequencer's accent bits, not here.
+    #[id = "accent_amt"]
+    pub accent_amount: FloatParam,
+
     // --- Saturation ---
     #[id = "sat_mode"]
     pub sat_mode: FloatParam,
@@ -197,6 +216,17 @@ pub struct SlammerParams {
 
     #[id = "sat_mix"]
     pub sat_mix: FloatParam,
+
+    // --- Per-voice soft-clip (pre-amp-envelope, separate from master sat) ---
+    /// Voice-clip mode (0=Off, 1=Tanh, 2=Diode, 3=Cubic). Default 0 keeps
+    /// every v0.5.x preset bit-identical at load time.
+    #[id = "kick_clip_mode"]
+    pub kick_clip_mode: FloatParam,
+
+    /// Voice-clip drive in [0, 1]. At 0 the shaper is identity for every
+    /// mode, so this param is opt-in.
+    #[id = "kick_clip_drive"]
+    pub kick_clip_drive: FloatParam,
 
     // --- Master EQ ---
     #[id = "eq_tilt"]
@@ -295,6 +325,7 @@ pub fn collect_kick_params(p: &SlammerParams) -> KickParams {
         mid_tone_gain: p.mid_tone_gain.value(),
         mid_noise_gain: p.mid_noise_gain.value(),
         mid_noise_color: p.mid_noise_color.value(),
+        mid_noise_decay_ms: p.mid_noise_decay_ms.value(),
 
         top_gain: p.top_gain.value(),
         top_decay_ms: p.top_decay_ms.value(),
@@ -304,9 +335,17 @@ pub fn collect_kick_params(p: &SlammerParams) -> KickParams {
 
         drift_amount: p.drift_amount.value(),
 
+        // Accent: per-step flag is overlaid by `plugin.rs` at trigger time;
+        // this snapshot only captures the host-automatable amount.
+        accent: false,
+        accent_amount: p.accent_amount.value(),
+
         sat_mode: p.sat_mode.value() as u8,
         sat_drive: p.sat_drive.value(),
         sat_mix: p.sat_mix.value(),
+
+        kick_clip_mode: p.kick_clip_mode.value() as u8,
+        kick_clip_drive: p.kick_clip_drive.value(),
 
         eq_tilt_db: p.eq_tilt_db.value(),
         eq_low_boost_db: p.eq_low_boost_db.value(),
@@ -335,6 +374,7 @@ impl Default for SlammerParams {
             editor_state: EguiState::from_size(680, 444),
 
             seq_steps: Arc::new(Mutex::new(DEFAULT_STEP_BITS)),
+            seq_accents: Arc::new(Mutex::new(DEFAULT_ACCENT_BITS)),
 
             ui_scale: Arc::new(Mutex::new(ui_scale)),
 
@@ -420,6 +460,7 @@ impl Default for SlammerParams {
                 0.4,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
+            mid_noise_decay_ms: ms_knob("Mid Noise Decay", 30.0, 1.0, 400.0, -1.0),
 
             // --- TOP ---
             top_gain: FloatParam::new("Top Gain", 0.25, FloatRange::Linear { min: 0.0, max: 1.0 })
@@ -449,6 +490,9 @@ impl Default for SlammerParams {
             // --- Drift ---
             drift_amount: pct_knob("Drift", 0.0),
 
+            // --- Accent ---
+            accent_amount: pct_knob("Accent Amount", 0.0),
+
             // --- Saturation ---
             sat_mode: FloatParam::new("Sat Mode", 0.0, FloatRange::Linear { min: 0.0, max: 3.0 })
                 .with_step_size(1.0)
@@ -461,6 +505,26 @@ impl Default for SlammerParams {
 
             sat_drive: pct_knob("Sat Drive", 0.0),
             sat_mix: pct_knob("Sat Mix", 1.0),
+
+            // --- Per-voice clip ---
+            kick_clip_mode: FloatParam::new(
+                "Kick Clip Mode",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 3.0 },
+            )
+            .with_step_size(1.0)
+            .with_value_to_string(Arc::new(|v| match v as u8 {
+                1 => "Tanh".into(),
+                2 => "Diode".into(),
+                3 => "Cubic".into(),
+                _ => "Off".into(),
+            })),
+            // Smoothed because the value is read per-sample inside
+            // `voice_clip::apply`. Without smoothing, dragging the knob
+            // creates audible glitches at every block boundary as the
+            // shaper's gain steps.
+            kick_clip_drive: pct_knob("Kick Clip Drive", 0.0)
+                .with_smoother(SmoothingStyle::Linear(10.0)),
 
             // --- EQ ---
             eq_tilt_db: FloatParam::new(
@@ -669,6 +733,7 @@ pub struct ParamSnapshot {
     pub mid_tone_gain: f32,
     pub mid_noise_gain: f32,
     pub mid_noise_color: f32,
+    pub mid_noise_decay_ms: f32,
 
     pub top_gain: f32,
     pub top_decay_ms: f32,
@@ -678,9 +743,14 @@ pub struct ParamSnapshot {
 
     pub drift_amount: f32,
 
+    pub accent_amount: f32,
+
     pub sat_mode: f32,
     pub sat_drive: f32,
     pub sat_mix: f32,
+
+    pub kick_clip_mode: f32,
+    pub kick_clip_drive: f32,
 
     pub eq_tilt_db: f32,
     pub eq_low_boost_db: f32,
@@ -731,6 +801,7 @@ impl ParamSnapshot {
             mid_tone_gain: p.mid_tone_gain.value(),
             mid_noise_gain: p.mid_noise_gain.value(),
             mid_noise_color: p.mid_noise_color.value(),
+            mid_noise_decay_ms: p.mid_noise_decay_ms.value(),
 
             top_gain: p.top_gain.value(),
             top_decay_ms: p.top_decay_ms.value(),
@@ -740,9 +811,14 @@ impl ParamSnapshot {
 
             drift_amount: p.drift_amount.value(),
 
+            accent_amount: p.accent_amount.value(),
+
             sat_mode: p.sat_mode.value(),
             sat_drive: p.sat_drive.value(),
             sat_mix: p.sat_mix.value(),
+
+            kick_clip_mode: p.kick_clip_mode.value(),
+            kick_clip_drive: p.kick_clip_drive.value(),
 
             eq_tilt_db: p.eq_tilt_db.value(),
             eq_low_boost_db: p.eq_low_boost_db.value(),
@@ -802,6 +878,7 @@ impl ParamSnapshot {
         set!(p.mid_tone_gain, self.mid_tone_gain);
         set!(p.mid_noise_gain, self.mid_noise_gain);
         set!(p.mid_noise_color, self.mid_noise_color);
+        set!(p.mid_noise_decay_ms, self.mid_noise_decay_ms);
 
         set!(p.top_gain, self.top_gain);
         set!(p.top_decay_ms, self.top_decay_ms);
@@ -811,9 +888,14 @@ impl ParamSnapshot {
 
         set!(p.drift_amount, self.drift_amount);
 
+        set!(p.accent_amount, self.accent_amount);
+
         set!(p.sat_mode, self.sat_mode);
         set!(p.sat_drive, self.sat_drive);
         set!(p.sat_mix, self.sat_mix);
+
+        set!(p.kick_clip_mode, self.kick_clip_mode);
+        set!(p.kick_clip_drive, self.kick_clip_drive);
 
         set!(p.eq_tilt_db, self.eq_tilt_db);
         set!(p.eq_low_boost_db, self.eq_low_boost_db);

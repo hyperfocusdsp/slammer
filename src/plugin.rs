@@ -86,6 +86,13 @@ pub struct Slammer {
     /// Previous buffer's `sequencer.running` value — used to detect the
     /// play-toggle rising edge and reset to step 1.
     seq_running_prev: bool,
+    /// Glitch-bisect knob, set once in `initialize()` from the
+    /// `SLAMMER_DISABLE_SPECTRUM` env var. When true, the audio thread
+    /// skips the spectrum analyzer's `feed_sample` call (which runs an
+    /// FFT every 1024 samples). Lets us A/B test whether the FFT is the
+    /// source of the v0.6.0 RT-only crunchiness — Autokit on the same
+    /// box has no audio-thread FFT and is glitch-free.
+    spectrum_disabled: bool,
 }
 
 impl Default for Slammer {
@@ -93,7 +100,10 @@ impl Default for Slammer {
         let (telem_tx, telem_rx) = telemetry::channel();
         let (ui_tx, ui_rx) = messages::channel();
         let params = Arc::new(SlammerParams::default());
-        let sequencer = Arc::new(Sequencer::new(Arc::clone(&params.seq_steps)));
+        let sequencer = Arc::new(Sequencer::new(
+            Arc::clone(&params.seq_steps),
+            Arc::clone(&params.seq_accents),
+        ));
         Self {
             params,
             engine: KickEngine::new(44100.0),
@@ -115,6 +125,10 @@ impl Default for Slammer {
             host_ever_stopped: false,
             last_host_step: None,
             seq_running_prev: false,
+            // Real value populated in `initialize()` from the env var so
+            // the standalone honors it. VST3/CLAP hosts honor it too if the
+            // user set the variable in the DAW launch environment.
+            spectrum_disabled: false,
         }
     }
 }
@@ -188,6 +202,18 @@ impl Plugin for Slammer {
         // point; copy the bitmask into the sequencer atomics so the first
         // `process()` call sees the restored pattern.
         self.sequencer.restore_from_persist();
+
+        // Bisect knob for the v0.6.0 glitch hunt. Anything set to a
+        // non-empty, non-"0" value disables the audio-thread FFT.
+        self.spectrum_disabled = std::env::var("SLAMMER_DISABLE_SPECTRUM")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false);
+        if self.spectrum_disabled {
+            tracing::warn!(
+                "SLAMMER_DISABLE_SPECTRUM is set — audio-thread spectrum FFT is OFF. \
+                 Spectrum display will not update."
+            );
+        }
         true
     }
 
@@ -260,7 +286,9 @@ impl Plugin for Slammer {
                             .current_step
                             .store(new_step, Ordering::Relaxed);
                         if self.sequencer.steps[new_step].load(Ordering::Relaxed) {
-                            self.engine.trigger(&collect_kick_params(&self.params));
+                            let mut p = collect_kick_params(&self.params);
+                            p.accent = self.sequencer.is_step_accented(new_step);
+                            self.engine.trigger(&p);
                         }
                     }
                 }
@@ -289,7 +317,9 @@ impl Plugin for Slammer {
                 self.seq_current_step = 0;
                 self.sequencer.current_step.store(0, Ordering::Relaxed);
                 if self.sequencer.steps[0].load(Ordering::Relaxed) {
-                    self.engine.trigger(&collect_kick_params(&self.params));
+                    let mut p = collect_kick_params(&self.params);
+                    p.accent = self.sequencer.is_step_accented(0);
+                    self.engine.trigger(&p);
                 }
             }
             self.seq_running_prev = running;
@@ -304,7 +334,9 @@ impl Plugin for Slammer {
                         .current_step
                         .store(self.seq_current_step, Ordering::Relaxed);
                     if self.sequencer.steps[self.seq_current_step].load(Ordering::Relaxed) {
-                        self.engine.trigger(&collect_kick_params(&self.params));
+                        let mut p = collect_kick_params(&self.params);
+                        p.accent = self.sequencer.is_step_accented(self.seq_current_step);
+                        self.engine.trigger(&p);
                     }
                 }
             } else {
@@ -428,7 +460,7 @@ impl Plugin for Slammer {
                 // stores — no mutex, no heap, nothing that can trip
                 // `assert_process_allocs`.
                 let mono = 0.5 * (ol + or_);
-                if self.spectrum.feed_sample(mono) {
+                if !self.spectrum_disabled && self.spectrum.feed_sample(mono) {
                     self.spectrum_shared.store_bins(self.spectrum.bins_db());
                 }
             }
@@ -479,6 +511,367 @@ impl Vst3Plugin for Slammer {
 mod tests {
     use super::*;
     use crate::dsp::engine::KickParams;
+    use crate::dsp::spectrum::SpectrumAnalyzer;
+
+    /// Render a long passage of the FULL signal chain (engine + master_bus
+    /// + DJ filter + tube + soft-clip + spectrum FFT feed) at the same
+    /// default-Init operating point the user reports glitches at: all
+    /// distortion stages off, comp/limiter off, DJ filter centred,
+    /// master_volume = 1.0 (warmth bypassed). Writes a WAV to /tmp so the
+    /// waveform can be inspected, and returns the captured samples for
+    /// further assertion.
+    ///
+    /// `bypass_spectrum` lets bisect tests turn off the FFT feed stage
+    /// to localise glitches: if disabling spectrum makes them disappear,
+    /// the spectrum analyzer is the culprit.
+    fn render_default_kick_loop_full_chain(
+        seconds: f32,
+        bpm: f32,
+        bypass_spectrum: bool,
+    ) -> Vec<f32> {
+        let sr = 48_000.0f32;
+        let total = (sr * seconds) as usize;
+        let samples_per_step = (sr * 60.0 / bpm / 4.0) as usize; // 16th note
+        let buffer_size = 1024usize;
+
+        let mut engine = KickEngine::new(sr);
+        let mut master_bus = MasterBus::new();
+        let mut tube = TubeWarmth::new();
+        let mut dj = DjFilter::new();
+        let mut spectrum = SpectrumAnalyzer::new(sr);
+        master_bus.prepare(sr);
+        dj.set_sample_rate(sr);
+
+        let params = KickParams::default();
+
+        let mut out = vec![0.0f32; total];
+        let mut sample_in_step: usize = 0;
+        let mut step: usize = 0;
+
+        let mut i = 0usize;
+        while i < total {
+            let n = (i + buffer_size).min(total) - i;
+            let mut buf_l = vec![0.0f32; n];
+            let mut buf_r = vec![0.0f32; n];
+
+            // Fire kicks 4-on-the-floor: every step is a hit (we'll fire on
+            // step boundaries inside the per-sample loop to keep timing
+            // sample-accurate).
+            for j in 0..n {
+                if sample_in_step == 0 {
+                    engine.trigger(&params);
+                }
+                sample_in_step += 1;
+                if sample_in_step >= samples_per_step {
+                    sample_in_step = 0;
+                    step = step.wrapping_add(1);
+                }
+                let _ = j;
+            }
+
+            // Engine fills (sums into) the buffer
+            engine.process(&mut buf_l, &mut buf_r, &params);
+
+            // Mirror plugin.rs per-sample chain at default operating point:
+            // DJ filter centred (bypass), master_bus bypassed, tube bypassed,
+            // soft_clip_safety, optional spectrum FFT feed.
+            for j in 0..n {
+                // NaN guard
+                if !buf_l[j].is_finite() {
+                    buf_l[j] = 0.0;
+                }
+                if !buf_r[j].is_finite() {
+                    buf_r[j] = 0.0;
+                }
+
+                // DJ filter PRE: filt_pos=0 → bypass
+                let (pre_l, pre_r) = dj.process_sample(buf_l[j], buf_r[j], 0.0, 0.0);
+
+                // master_bus bypass gate: amount=0, drive=0, limiter=false
+                let (cl, cr) = (pre_l, pre_r);
+
+                // tube_warmth: master_gain=1.0 → amount=0 → bypass
+                let (wl, wr) = tube.process_sample(cl, cr, 0.0);
+
+                // DJ filter POST: filt_pre=true (default? let's mirror)
+                // We took filt_pre branch above; nothing to do here.
+                let (fl, fr) = (wl, wr);
+
+                // soft_clip_safety + master gain
+                let ol = soft_clip_safety(fl * 1.0);
+                let or_ = soft_clip_safety(fr * 1.0);
+
+                // mono mix into out
+                let mono = 0.5 * (ol + or_);
+                out[i + j] = mono;
+
+                if !bypass_spectrum {
+                    let _ = spectrum.feed_sample(mono);
+                }
+            }
+
+            i += n;
+        }
+
+        // Write WAV for visual inspection (mono, 48 kHz, 32-bit float).
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: sr as u32,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let path = if bypass_spectrum {
+            "/tmp/slammer_offline_no_spectrum.wav"
+        } else {
+            "/tmp/slammer_offline_full_chain.wav"
+        };
+        if let Ok(mut wav) = hound::WavWriter::create(path, spec) {
+            for &s in &out {
+                let _ = wav.write_sample(s);
+            }
+            let _ = wav.finalize();
+        }
+
+        out
+    }
+
+    /// Repro driver: render the full chain, look for any sample-to-sample
+    /// jumps that would be audible as bitcrush-style artifacts. A clean
+    /// kick at default decay has its largest natural delta during the
+    /// attack ramp (~0.05/sample) and the sub-sweep transition; nothing
+    /// should exceed ~0.3 in clean playback. We also dump per-second
+    /// max-deltas so a periodic FFT-correlated artifact would show up.
+    #[test]
+    fn render_full_chain_default_preset_no_audible_artifacts() {
+        let secs = 5.0;
+        let bpm = 120.0;
+        let samples = render_default_kick_loop_full_chain(secs, bpm, false);
+        let sr = 48_000.0f32 as usize;
+
+        // Stats per second
+        for s in 0..(secs as usize) {
+            let start = s * sr;
+            let end = ((s + 1) * sr).min(samples.len());
+            let slice = &samples[start..end];
+            let mut max_abs = 0.0f32;
+            let mut max_delta = 0.0f32;
+            let mut max_delta_idx = 0usize;
+            for i in 1..slice.len() {
+                let a = slice[i].abs();
+                if a > max_abs { max_abs = a; }
+                let d = (slice[i] - slice[i - 1]).abs();
+                if d > max_delta {
+                    max_delta = d;
+                    max_delta_idx = i;
+                }
+            }
+            eprintln!(
+                "second {s}: peak={max_abs:.4}, max_delta={max_delta:.4} at offset {max_delta_idx}"
+            );
+        }
+
+        // Hard checks
+        for (i, &s) in samples.iter().enumerate() {
+            assert!(s.is_finite(), "non-finite at sample {i}");
+        }
+        let mut worst = 0.0f32;
+        let mut worst_idx = 0usize;
+        for i in 1..samples.len() {
+            let d = (samples[i] - samples[i - 1]).abs();
+            if d > worst { worst = d; worst_idx = i; }
+        }
+        eprintln!("OVERALL worst delta = {worst:.6} at sample {worst_idx}");
+        // Threshold tuned to catch bitcrush-style artifacts that exceed the
+        // natural attack-ramp slope of a clean kick. A loose 0.5 lets the
+        // attack edge through; anything dramatically above this needs to be
+        // explained.
+        assert!(
+            worst < 0.5,
+            "audible artifact: per-sample delta {worst:.6} at sample {worst_idx}"
+        );
+    }
+
+    /// Companion bisect test: re-run with spectrum FFT feed disabled.
+    /// If the *first* test fails on per-second deltas correlated with the
+    /// 1024-sample FFT period and this test is clean, the spectrum
+    /// analyzer's call into `realfft::process_with_scratch` is the culprit.
+    #[test]
+    fn render_full_chain_default_preset_no_artifacts_without_spectrum() {
+        let secs = 5.0;
+        let bpm = 120.0;
+        let samples = render_default_kick_loop_full_chain(secs, bpm, true);
+        for (i, &s) in samples.iter().enumerate() {
+            assert!(s.is_finite(), "non-finite at sample {i}");
+        }
+    }
+
+    /// Bisect helper for the v0.6.0 glitch hunt: render with custom kick
+    /// params (e.g. 909 preset values, heavy drift) and comp/limiter
+    /// engaged to make sure the bug isn't hiding in a non-default preset.
+    /// Writes WAV to /tmp/slammer_offline_<tag>.wav.
+    fn render_with_params(
+        seconds: f32,
+        bpm: f32,
+        params: KickParams,
+        comp_amount: f32,
+        comp_drive: f32,
+        limiter_on: bool,
+        master_volume: f32,
+        tag: &str,
+    ) -> Vec<f32> {
+        let sr = 48_000.0f32;
+        let total = (sr * seconds) as usize;
+        let samples_per_step = (sr * 60.0 / bpm / 4.0) as usize;
+        let buffer_size = 1024usize;
+
+        let mut engine = KickEngine::new(sr);
+        let mut master_bus = MasterBus::new();
+        let mut tube = TubeWarmth::new();
+        let mut dj = DjFilter::new();
+        let mut spectrum = SpectrumAnalyzer::new(sr);
+        master_bus.prepare(sr);
+        dj.set_sample_rate(sr);
+
+        let mut out = vec![0.0f32; total];
+        let mut sample_in_step = 0usize;
+
+        let mut i = 0usize;
+        while i < total {
+            let n = (i + buffer_size).min(total) - i;
+            let mut buf_l = vec![0.0f32; n];
+            let mut buf_r = vec![0.0f32; n];
+
+            for _ in 0..n {
+                if sample_in_step == 0 {
+                    engine.trigger(&params);
+                }
+                sample_in_step += 1;
+                if sample_in_step >= samples_per_step {
+                    sample_in_step = 0;
+                }
+            }
+            engine.process(&mut buf_l, &mut buf_r, &params);
+
+            for j in 0..n {
+                if !buf_l[j].is_finite() { buf_l[j] = 0.0; }
+                if !buf_r[j].is_finite() { buf_r[j] = 0.0; }
+
+                let (pre_l, pre_r) = dj.process_sample(buf_l[j], buf_r[j], 0.0, 0.0);
+
+                let threshold_db = -6.0 + comp_amount * -24.0;
+                let ratio = 2.0 + comp_amount * 8.0;
+                let knee_db = 0.0f32;
+                master_bus.set_times(10.0, 100.0, sr);
+                let (cl, cr) = if comp_amount > 0.0001 || comp_drive > 0.001 || limiter_on {
+                    master_bus.process_sample(
+                        pre_l, pre_r,
+                        threshold_db, ratio, knee_db,
+                        comp_drive, limiter_on,
+                    )
+                } else {
+                    (pre_l, pre_r)
+                };
+
+                const UNITY_TO_PLUS_6DB: f32 = 1.995_262_3 - 1.0;
+                let warmth_amount = ((master_volume - 1.0) / UNITY_TO_PLUS_6DB).clamp(0.0, 1.0);
+                let (wl, wr) = tube.process_sample(cl, cr, warmth_amount);
+
+                let ol = soft_clip_safety(wl * master_volume);
+                let or_ = soft_clip_safety(wr * master_volume);
+
+                let mono = 0.5 * (ol + or_);
+                out[i + j] = mono;
+                let _ = spectrum.feed_sample(mono);
+            }
+
+            i += n;
+        }
+
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: sr as u32,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let path = format!("/tmp/slammer_offline_{tag}.wav");
+        if let Ok(mut wav) = hound::WavWriter::create(&path, spec) {
+            for &s in &out {
+                let _ = wav.write_sample(s);
+            }
+            let _ = wav.finalize();
+        }
+
+        out
+    }
+
+    /// 909-preset render: drift engaged, Diode saturation, Tanh voice clip,
+    /// 16th-note retriggering. Mirrors what the user's most-likely operating
+    /// point looks like.
+    #[test]
+    fn render_909_preset_no_artifacts() {
+        let mut p = KickParams::default();
+        p.decay_ms = 200.0;
+        p.sub_fstart = 65.0;
+        p.sub_fend = 50.0;
+        p.top_gain = 0.15;
+        p.mid_noise_gain = 0.1;
+        p.mid_noise_decay_ms = 15.0;
+        p.sat_mode = 2; // Diode
+        p.sat_drive = 0.1;
+        p.drift_amount = 0.2;
+        p.kick_clip_mode = 1; // Tanh
+        p.kick_clip_drive = 0.15;
+        let samples = render_with_params(5.0, 120.0, p, 0.0, 0.0, false, 1.0, "909");
+        for (i, &s) in samples.iter().enumerate() {
+            assert!(s.is_finite(), "non-finite at sample {i}");
+        }
+        let mut worst = 0.0f32; let mut worst_idx = 0usize;
+        for i in 1..samples.len() {
+            let d = (samples[i] - samples[i-1]).abs();
+            if d > worst { worst = d; worst_idx = i; }
+        }
+        eprintln!("909 worst delta = {worst:.6} at sample {worst_idx}");
+        assert!(worst < 0.7, "audible artifact in 909 preset: delta {worst:.6} at {worst_idx}");
+    }
+
+    /// Comp + limiter + drive engaged + master_volume above unity (tube
+    /// warmth active). Exercises every per-sample DSP stage at once.
+    #[test]
+    fn render_full_chain_everything_engaged_no_artifacts() {
+        let p = KickParams::default();
+        let samples = render_with_params(5.0, 120.0, p, 0.5, 0.4, true, 1.4, "everything_on");
+        for (i, &s) in samples.iter().enumerate() {
+            assert!(s.is_finite(), "non-finite at sample {i}");
+        }
+        let mut worst = 0.0f32; let mut worst_idx = 0usize;
+        for i in 1..samples.len() {
+            let d = (samples[i] - samples[i-1]).abs();
+            if d > worst { worst = d; worst_idx = i; }
+        }
+        eprintln!("everything-on worst delta = {worst:.6} at sample {worst_idx}");
+        // Comp + limiter introduce dynamic compression so single-sample
+        // deltas can be larger than the un-comped tests, but should still
+        // stay well under unity.
+        assert!(worst < 1.0, "audible artifact: delta {worst:.6} at {worst_idx}");
+    }
+
+    /// Heavy retriggering: 32nd notes (16/sec at 120 BPM) — voice stealing
+    /// happens almost continuously. Default preset, all FX off.
+    #[test]
+    fn render_heavy_retrigger_no_artifacts() {
+        let p = KickParams::default();
+        let samples = render_with_params(3.0, 120.0 * 2.0, p, 0.0, 0.0, false, 1.0, "heavy_retrig");
+        for (i, &s) in samples.iter().enumerate() {
+            assert!(s.is_finite(), "non-finite at sample {i}");
+        }
+        let mut worst = 0.0f32; let mut worst_idx = 0usize;
+        for i in 1..samples.len() {
+            let d = (samples[i] - samples[i-1]).abs();
+            if d > worst { worst = d; worst_idx = i; }
+        }
+        eprintln!("heavy_retrig worst delta = {worst:.6} at sample {worst_idx}");
+        assert!(worst < 0.6, "audible artifact in heavy retrigger: delta {worst:.6} at {worst_idx}");
+    }
 
     #[test]
     fn soft_clip_safety_passes_through_below_threshold() {

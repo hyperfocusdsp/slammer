@@ -6,6 +6,7 @@ use crate::dsp::filter::{EqParams, MasterEq};
 use crate::dsp::noise::NoiseGen;
 use crate::dsp::oscillator::SineOsc;
 use crate::dsp::saturation::{SatMode, Saturation};
+use crate::dsp::voice_clip;
 
 /// Voice-steal fadeout time. When a new trigger arrives while another voice
 /// is still audible, that voice is linearly ramped to silence over this many
@@ -44,6 +45,13 @@ struct KickVoice {
     mid_osc: SineOsc,
     mid_pitch_env: PitchEnvelope,
     mid_amp_env: AmpEnvelope,
+    /// Independent amp envelope for the MID noise channel. Real 909 kicks
+    /// have a short noise BURST gated to attack (~15-30 ms), distinct from
+    /// the tone's longer tail. Legacy slammer ran noise off `mid_amp_env`,
+    /// which made noise sustain for as long as the tone — too "hissy" on
+    /// long-decay presets. With its own envelope, noise can stay short
+    /// while the tone keeps its tail.
+    mid_noise_amp_env: AmpEnvelope,
     mid_noise: NoiseGen,
     // TOP
     top_click: ClickGen,
@@ -58,6 +66,11 @@ struct KickVoice {
     /// True once any generator in this voice has been triggered; gates the
     /// early-exit in `KickEngine::process()`.
     triggered: bool,
+    /// Per-trigger amplitude jitter (≈±2.5% at full drift). Multiplied into
+    /// the voice's tick output AFTER the layer mix and BEFORE fadeout, so a
+    /// single random value perturbs the whole hit's level. 1.0 when
+    /// `drift_amount` is 0 — preserves deterministic v0.5.x behavior.
+    amp_scale: f32,
 }
 
 impl KickVoice {
@@ -69,6 +82,7 @@ impl KickVoice {
             mid_osc: SineOsc::new(sample_rate),
             mid_pitch_env: PitchEnvelope::new(sample_rate),
             mid_amp_env: AmpEnvelope::new(sample_rate),
+            mid_noise_amp_env: AmpEnvelope::new(sample_rate),
             mid_noise: NoiseGen::new(sample_rate),
             top_click: ClickGen::new(sample_rate),
             top_amp_env: AmpEnvelope::new(sample_rate),
@@ -77,6 +91,7 @@ impl KickVoice {
             fadeout_gain: 1.0,
             fadeout_step: 0.0,
             triggered: false,
+            amp_scale: 1.0,
         }
     }
 
@@ -85,7 +100,9 @@ impl KickVoice {
     }
 
     /// Voice is still producing audio: one of its generators has state AND
-    /// its fadeout hasn't fully killed it.
+    /// its fadeout hasn't fully killed it. The noise envelope is checked
+    /// even though it's typically the shortest — a user-tuned long-noise
+    /// preset shouldn't get cut off if it outlasts the tone envelope.
     fn is_active(&self) -> bool {
         if !self.triggered {
             return false;
@@ -95,6 +112,7 @@ impl KickVoice {
         }
         self.sub_amp_env.is_active()
             || self.mid_amp_env.is_active()
+            || self.mid_noise_amp_env.is_active()
             || self.top_click.is_active()
     }
 
@@ -108,9 +126,27 @@ impl KickVoice {
         self.fadeout_step = 0.0;
         self.triggered = true;
 
-        // Analog pitch drift (phase is always deterministic for consistent low end)
+        // Analog drift — three axes, all gated by the same `drift_amount`:
+        //  - pitch:  per-layer (sub/mid sample independently for a tiny detune)
+        //  - amp:    per-trigger (one value scales the whole voice's output)
+        //  - decay:  per-trigger (one value scales every amp envelope's tau)
+        // Phase stays deterministic so identical hits keep identical low end.
         let sub_pf = drift.pitch_jitter(params.drift_amount);
         let mid_pf = drift.pitch_jitter(params.drift_amount);
+        let env_drift = drift.sample_envelope(params.drift_amount);
+        let mut amp_scale = env_drift.amp_scale;
+        let mut decay_scale = env_drift.decay_scale;
+
+        // Accent: 909-style velocity boost. Lifts amplitude moderately and
+        // extends the decay so accented hits cut through the mix. Both
+        // multipliers compose with the drift values above so accented hits
+        // still get their per-trigger drift jitter on top.
+        if params.accent && params.accent_amount > 0.0 {
+            let a = params.accent_amount.min(1.0);
+            amp_scale *= 1.0 + 0.3 * a;
+            decay_scale *= 1.0 + 0.5 * a;
+        }
+        self.amp_scale = amp_scale;
 
         // SUB
         self.sub_pitch_env.trigger(
@@ -119,7 +155,8 @@ impl KickVoice {
             params.sub_sweep_ms / 1000.0,
             params.sub_sweep_curve,
         );
-        self.sub_amp_env.trigger(params.decay_ms);
+        self.sub_amp_env
+            .trigger(params.decay_ms * decay_scale, params.drift_amount);
         self.sub_osc.trigger(params.sub_phase_offset);
 
         // MID
@@ -129,7 +166,20 @@ impl KickVoice {
             params.mid_sweep_ms / 1000.0,
             params.mid_sweep_curve,
         );
-        self.mid_amp_env.trigger(params.mid_decay_ms);
+        self.mid_amp_env
+            .trigger(params.mid_decay_ms * decay_scale, params.drift_amount);
+        // Noise gets its own short envelope (gated to attack). Legacy
+        // presets that omit `mid_noise_decay_ms` deserialize as 0.0 — a
+        // value < 1.0 would crash the noise instantly via the AmpEnvelope
+        // tau formula. Treat anything below 1 ms as the legacy "sustained"
+        // sentinel and fall back to the tone's decay.
+        let noise_decay_ms = if params.mid_noise_decay_ms >= 1.0 {
+            params.mid_noise_decay_ms
+        } else {
+            params.mid_decay_ms
+        };
+        self.mid_noise_amp_env
+            .trigger(noise_decay_ms * decay_scale, params.drift_amount);
         self.mid_osc.trigger(params.mid_phase_offset);
         self.mid_noise.trigger();
 
@@ -141,7 +191,8 @@ impl KickVoice {
             params.top_bw,
         );
         self.top_click.trigger();
-        self.top_amp_env.trigger(params.top_decay_ms);
+        self.top_amp_env
+            .trigger(params.top_decay_ms * decay_scale, params.drift_amount);
         self.metal_phase = 0.0;
     }
 
@@ -164,17 +215,40 @@ impl KickVoice {
             return 0.0;
         }
 
-        // SUB: sine with pitch sweep + amp envelope
+        // SUB: sine with pitch sweep + amp envelope. Per-voice soft-clip
+        // sits BEFORE the VCA (amp env), matching 909 architecture
+        // (VCO → clipper → VCA). At kick_clip_mode=0 / drive=0 the
+        // shaper is bit-identical pass-through, so v0.5.x behavior is
+        // preserved for every existing preset.
         let sub_freq = self.sub_pitch_env.tick();
         let sub_amp = self.sub_amp_env.tick();
-        let sub = self.sub_osc.tick(sub_freq) * params.sub_gain * sub_amp;
+        let sub_raw = self.sub_osc.tick(sub_freq) * params.sub_gain;
+        let sub_shaped = voice_clip::apply(
+            params.kick_clip_mode,
+            params.kick_clip_drive,
+            sub_raw,
+        );
+        let sub = sub_shaped * sub_amp;
 
-        // MID: sine + noise, own pitch envelope + amp envelope
+        // MID: sine path and noise path are now SEPARATE — tone goes
+        // through pitch env + voice-clip + tone amp env, noise goes
+        // through its own short attack-gated env. This matches how a
+        // 909 actually generates the mid layer (tone VCO into clipper
+        // into VCA, noise generator into its own short VCA in parallel).
+        // Without the split, raising mid_noise_gain bled hiss into the
+        // entire tail; with it, noise contributes only the snap.
         let mid_freq = self.mid_pitch_env.tick();
         let mid_amp = self.mid_amp_env.tick();
-        let mid_tone = self.mid_osc.tick(mid_freq) * params.mid_tone_gain;
-        let mid_noise = self.mid_noise.tick(params.mid_noise_color) * params.mid_noise_gain;
-        let mid = (mid_tone + mid_noise) * params.mid_gain * mid_amp;
+        let mid_noise_amp = self.mid_noise_amp_env.tick();
+        let mid_tone_raw = self.mid_osc.tick(mid_freq) * params.mid_tone_gain * params.mid_gain;
+        let mid_tone_shaped = voice_clip::apply(
+            params.kick_clip_mode,
+            params.kick_clip_drive,
+            mid_tone_raw,
+        );
+        let mid_noise_raw =
+            self.mid_noise.tick(params.mid_noise_color) * params.mid_noise_gain * params.mid_gain;
+        let mid = mid_tone_shaped * mid_amp + mid_noise_raw * mid_noise_amp;
 
         // TOP: click transient with optional metallic ring modulation
         let top_raw = self.top_click.tick();
@@ -192,9 +266,14 @@ impl KickVoice {
             top_raw * params.top_gain * top_amp
         };
 
-        let sample = (sub + mid + top) * self.fadeout_gain;
-
-        // Advance fadeout ramp (if any)
+        // Advance fadeout BEFORE computing the sample. With the previous
+        // post-compute order, the final sample of a fading voice was
+        // multiplied by ~`fadeout_step` (≈ 0.004 at 5 ms / 48 kHz) instead
+        // of zero — which on a sustained voice produced a -54 dB residual
+        // step at the boundary, audible as an occasional tic on
+        // back-to-back retriggers (voice stealing). Decrementing first
+        // means the last computed sample lands at exactly fadeout_gain=0
+        // and the transition to the dead voice is silent.
         if self.fadeout_step > 0.0 {
             self.fadeout_gain -= self.fadeout_step;
             if self.fadeout_gain <= 0.0 {
@@ -203,7 +282,7 @@ impl KickVoice {
             }
         }
 
-        sample
+        (sub + mid + top) * self.amp_scale * self.fadeout_gain
     }
 }
 
@@ -446,6 +525,11 @@ pub struct KickParams {
     pub mid_tone_gain: f32,
     pub mid_noise_gain: f32,
     pub mid_noise_color: f32,
+    /// Decay time for the MID noise channel's own amp envelope. Below
+    /// 1.0 ms acts as a legacy sentinel meaning "sustain with the tone"
+    /// (i.e. fall back to `mid_decay_ms`) — this lets v0.5.x preset JSON
+    /// deserialize without instantly muting noise on load.
+    pub mid_noise_decay_ms: f32,
 
     // TOP
     pub top_gain: f32,
@@ -454,13 +538,26 @@ pub struct KickParams {
     pub top_bw: f32,
     pub top_metal: f32,
 
-    // Saturation
+    // Saturation (master-bus, post-envelope)
     pub sat_mode: u8,
     pub sat_drive: f32,
     pub sat_mix: f32,
 
+    // Per-voice soft-clip (pre-amp-envelope, in `KickVoice::tick`). 0 = Off.
+    // See `dsp::voice_clip` for mode constants.
+    pub kick_clip_mode: u8,
+    pub kick_clip_drive: f32,
+
     // Drift
     pub drift_amount: f32,
+
+    // Accent — 909-style velocity boost. `accent` is a per-trigger flag set
+    // by `plugin.rs` from the sequencer's accent bits (false for manual
+    // triggers). `accent_amount` is the host param scaling how much accent
+    // lifts a hit. At `accent_amount = 0` the flag has no effect, so
+    // existing presets stay deterministic.
+    pub accent: bool,
+    pub accent_amount: f32,
 
     // EQ
     pub eq_tilt_db: f32,
@@ -499,6 +596,7 @@ impl Default for KickParams {
             mid_tone_gain: 0.7,
             mid_noise_gain: 0.3,
             mid_noise_color: 0.4,
+            mid_noise_decay_ms: 30.0,
 
             top_gain: 0.25,
             top_decay_ms: 6.0,
@@ -510,7 +608,13 @@ impl Default for KickParams {
             sat_drive: 0.0,
             sat_mix: 1.0,
 
+            kick_clip_mode: 0,
+            kick_clip_drive: 0.0,
+
             drift_amount: 0.0,
+
+            accent: false,
+            accent_amount: 0.0,
 
             eq_tilt_db: 0.0,
             eq_low_boost_db: 0.0,
@@ -579,6 +683,294 @@ mod tests {
         let mut right = vec![0.0f32; 22050];
         engine.process(&mut left, &mut right, &params);
         assert!(!engine.is_active(), "engine should be inactive after decay");
+    }
+
+    #[test]
+    fn zero_drift_is_deterministic_across_triggers() {
+        // Regression guard: at drift_amount=0, every trigger must produce
+        // identical samples. amp_scale and decay_scale must collapse to
+        // exactly 1.0 so v0.5.x users don't experience any change in their
+        // existing presets. Voice stealing means the second trigger lands
+        // in a different slot, so we capture the first hit's tail before
+        // retriggering and compare the early-attack windows separately.
+        let params = KickParams {
+            drift_amount: 0.0,
+            ..KickParams::default()
+        };
+        let mut engine = KickEngine::new(44100.0);
+        engine.trigger(&params);
+        let mut l1 = vec![0.0f32; 256];
+        let mut r1 = vec![0.0f32; 256];
+        engine.process(&mut l1, &mut r1, &params);
+
+        let mut engine2 = KickEngine::new(44100.0);
+        engine2.trigger(&params);
+        let mut l2 = vec![0.0f32; 256];
+        let mut r2 = vec![0.0f32; 256];
+        engine2.process(&mut l2, &mut r2, &params);
+
+        for i in 0..256 {
+            assert_eq!(
+                l1[i], l2[i],
+                "drift_amount=0 must be deterministic at sample {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn accent_no_op_when_amount_is_zero() {
+        // The per-step accent flag must stay inert when the host param
+        // `accent_amount` is 0 — guarantees v0.5.x preset behavior is
+        // unchanged regardless of where accent flags happen to be set.
+        let p_dry = KickParams {
+            accent: false,
+            accent_amount: 0.0,
+            ..KickParams::default()
+        };
+        let p_flag = KickParams {
+            accent: true,
+            accent_amount: 0.0,
+            ..KickParams::default()
+        };
+        let mut e1 = KickEngine::new(44100.0);
+        let mut e2 = KickEngine::new(44100.0);
+        e1.trigger(&p_dry);
+        e2.trigger(&p_flag);
+        let mut l1 = vec![0.0f32; 256];
+        let mut r1 = vec![0.0f32; 256];
+        let mut l2 = vec![0.0f32; 256];
+        let mut r2 = vec![0.0f32; 256];
+        e1.process(&mut l1, &mut r1, &p_dry);
+        e2.process(&mut l2, &mut r2, &p_flag);
+        for i in 0..256 {
+            assert_eq!(
+                l1[i], l2[i],
+                "accent flag must not affect output at amount=0 (sample {i})"
+            );
+        }
+    }
+
+    #[test]
+    fn accent_increases_peak_amplitude() {
+        // With non-trivial accent_amount, an accented hit should peak
+        // measurably higher than an unaccented one. Catches a regression
+        // where the boost is wired but `accent_amount` plumbing breaks
+        // (stuck at 0 in collect_kick_params or similar).
+        let p_dry = KickParams {
+            accent: false,
+            accent_amount: 1.0,
+            sat_mode: 0, // bypass master saturation so we measure raw level
+            ..KickParams::default()
+        };
+        let p_acc = KickParams {
+            accent: true,
+            accent_amount: 1.0,
+            sat_mode: 0,
+            ..KickParams::default()
+        };
+        let mut e1 = KickEngine::new(44100.0);
+        let mut e2 = KickEngine::new(44100.0);
+        e1.trigger(&p_dry);
+        e2.trigger(&p_acc);
+        let mut l1 = vec![0.0f32; 1024];
+        let mut r1 = vec![0.0f32; 1024];
+        let mut l2 = vec![0.0f32; 1024];
+        let mut r2 = vec![0.0f32; 1024];
+        e1.process(&mut l1, &mut r1, &p_dry);
+        e2.process(&mut l2, &mut r2, &p_acc);
+        let p1 = l1.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
+        let p2 = l2.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
+        assert!(
+            p2 > p1 * 1.15,
+            "accent at amount=1.0 should boost peak ≥15% (dry {p1} vs accented {p2})"
+        );
+    }
+
+    #[test]
+    fn short_noise_decay_silences_noise_before_tone() {
+        // With mid_tone muted and only noise enabled, a 5 ms noise envelope
+        // should die well before a 250 ms test window ends. Uses sub also
+        // muted so we measure noise in isolation. Catches a regression where
+        // the noise envelope is silently routed off `mid_amp_env` again.
+        let params = KickParams {
+            sub_gain: 0.0,
+            mid_gain: 1.0,
+            mid_tone_gain: 0.0,
+            mid_noise_gain: 0.5,
+            mid_decay_ms: 250.0,
+            mid_noise_decay_ms: 5.0,
+            top_gain: 0.0,
+            sat_mode: 0,
+            ..KickParams::default()
+        };
+        let mut engine = KickEngine::new(44100.0);
+        engine.trigger(&params);
+
+        // Sample at ~50 ms — well past the 5 ms noise decay (~10 tau).
+        let early_n = (0.050 * 44100.0) as usize;
+        let mut early_l = vec![0.0f32; early_n];
+        let mut early_r = vec![0.0f32; early_n];
+        engine.process(&mut early_l, &mut early_r, &params);
+        // Then sample for another 50 ms — by here the noise should be
+        // effectively silent (<-60 dB peak); previous "sustained" code
+        // would still have audible hiss because mid_amp_env hasn't decayed.
+        let late_n = (0.050 * 44100.0) as usize;
+        let mut late_l = vec![0.0f32; late_n];
+        let mut late_r = vec![0.0f32; late_n];
+        engine.process(&mut late_l, &mut late_r, &params);
+
+        let early_peak = early_l.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
+        let late_peak = late_l.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
+        assert!(
+            early_peak > 0.005,
+            "noise should be audible during attack (early peak {early_peak})"
+        );
+        assert!(
+            late_peak < early_peak * 0.05,
+            "noise should be ≥26 dB down by 100 ms with 5 ms decay (late peak {late_peak} vs early {early_peak})"
+        );
+    }
+
+    #[test]
+    fn legacy_noise_decay_falls_back_to_tone_decay() {
+        // Old preset JSONs deserialize `mid_noise_decay_ms` to 0.0. Feeding
+        // that to AmpEnvelope::trigger directly would crash the noise
+        // instantly (tau ≈ 0). The trigger path treats anything < 1 ms as
+        // a sentinel and reuses `mid_decay_ms`, so a legacy preset's noise
+        // should still be audible well into the tail.
+        let legacy = KickParams {
+            sub_gain: 0.0,
+            mid_gain: 1.0,
+            mid_tone_gain: 0.0,
+            mid_noise_gain: 0.5,
+            mid_decay_ms: 200.0,
+            mid_noise_decay_ms: 0.0, // legacy default
+            top_gain: 0.0,
+            sat_mode: 0,
+            ..KickParams::default()
+        };
+        let mut engine = KickEngine::new(44100.0);
+        engine.trigger(&legacy);
+        let n = (0.080 * 44100.0) as usize; // 80 ms in
+        let mut l = vec![0.0f32; n];
+        let mut r = vec![0.0f32; n];
+        engine.process(&mut l, &mut r, &legacy);
+        // Take the last few ms — should still have measurable noise content.
+        let tail_start = n.saturating_sub((0.005 * 44100.0) as usize);
+        let tail_peak = l[tail_start..]
+            .iter()
+            .fold(0.0f32, |a, &b| a.max(b.abs()));
+        assert!(
+            tail_peak > 0.005,
+            "legacy noise (decay_ms=0 → mid_decay fallback) silenced too early; tail_peak {tail_peak}"
+        );
+    }
+
+    #[test]
+    fn voice_clip_off_matches_pre_clip_baseline() {
+        // The whole point of opting in to voice-clip is that legacy presets
+        // don't change. Two engines, identical params, one with explicit
+        // kick_clip_mode=0 and one with kick_clip_drive=0 — both must produce
+        // bit-identical output.
+        let p_off = KickParams {
+            kick_clip_mode: 0,
+            kick_clip_drive: 0.5, // drive without mode is still off
+            ..KickParams::default()
+        };
+        let p_zero_drive = KickParams {
+            kick_clip_mode: 1, // tanh, but...
+            kick_clip_drive: 0.0, // ...drive=0 short-circuits to identity
+            ..KickParams::default()
+        };
+        let mut e1 = KickEngine::new(44100.0);
+        let mut e2 = KickEngine::new(44100.0);
+        e1.trigger(&p_off);
+        e2.trigger(&p_zero_drive);
+        let mut l1 = vec![0.0f32; 256];
+        let mut r1 = vec![0.0f32; 256];
+        let mut l2 = vec![0.0f32; 256];
+        let mut r2 = vec![0.0f32; 256];
+        e1.process(&mut l1, &mut r1, &p_off);
+        e2.process(&mut l2, &mut r2, &p_zero_drive);
+        for i in 0..256 {
+            assert_eq!(
+                l1[i], l2[i],
+                "voice clip off-path should be bit-identical at sample {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn voice_clip_changes_output_when_engaged() {
+        // Sanity: with the clip engaged at non-trivial drive, the engine's
+        // sample stream must measurably differ from the unclipped baseline.
+        // Catches a regression where the clip is wired but param plumbing
+        // fails to reach `voice_clip::apply` (mode/drive stuck at 0).
+        let p_dry = KickParams {
+            kick_clip_mode: 0,
+            kick_clip_drive: 0.0,
+            ..KickParams::default()
+        };
+        let p_clipped = KickParams {
+            kick_clip_mode: 1, // Tanh
+            kick_clip_drive: 0.8,
+            ..KickParams::default()
+        };
+        let mut e1 = KickEngine::new(44100.0);
+        let mut e2 = KickEngine::new(44100.0);
+        e1.trigger(&p_dry);
+        e2.trigger(&p_clipped);
+        let mut l1 = vec![0.0f32; 512];
+        let mut r1 = vec![0.0f32; 512];
+        let mut l2 = vec![0.0f32; 512];
+        let mut r2 = vec![0.0f32; 512];
+        e1.process(&mut l1, &mut r1, &p_dry);
+        e2.process(&mut l2, &mut r2, &p_clipped);
+        let diff: f32 = l1.iter().zip(l2.iter()).map(|(a, b)| (a - b).abs()).sum();
+        assert!(
+            diff > 0.5,
+            "engaged voice clip should measurably alter output (sum-abs diff = {diff})"
+        );
+    }
+
+    #[test]
+    fn drift_amp_scale_varies_consecutive_triggers() {
+        // At drift_amount=1.0, the new amp_scale per-trigger jitter must
+        // make consecutive triggers measurably differ in peak amplitude.
+        // Guards against amp_scale being silently dropped from the tick
+        // chain. Use two fresh engines with fresh LCG state so the test
+        // exercises sequential drift samples (not engine-to-engine parity).
+        let params = KickParams {
+            drift_amount: 1.0,
+            mid_gain: 0.0,
+            top_gain: 0.0,
+            clap_on: false,
+            ..KickParams::default()
+        };
+        let mut engine = KickEngine::new(44100.0);
+        engine.trigger(&params);
+        let mut l1 = vec![0.0f32; 1024];
+        let mut r1 = vec![0.0f32; 1024];
+        engine.process(&mut l1, &mut r1, &params);
+
+        // Wait long enough for the first hit to fully decay so voice
+        // stealing's fadeout doesn't muddle the peak comparison.
+        let mut tail_l = vec![0.0f32; 22050];
+        let mut tail_r = vec![0.0f32; 22050];
+        engine.process(&mut tail_l, &mut tail_r, &params);
+
+        engine.trigger(&params);
+        let mut l2 = vec![0.0f32; 1024];
+        let mut r2 = vec![0.0f32; 1024];
+        engine.process(&mut l2, &mut r2, &params);
+
+        let peak1 = l1.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
+        let peak2 = l2.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
+        assert!(peak1 > 0.01 && peak2 > 0.01, "expected audible peaks");
+        assert!(
+            (peak1 - peak2).abs() > 1e-5,
+            "consecutive triggers at full drift should differ in peak ({peak1} vs {peak2})"
+        );
     }
 
     #[test]

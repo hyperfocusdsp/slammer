@@ -13,12 +13,21 @@ pub const STEPS: usize = 16;
 
 /// Default pattern: four-on-the-floor (steps 0, 4, 8, 12).
 pub const DEFAULT_STEP_BITS: u16 = 0x1111;
+/// Default accent pattern: no accents — fully opt-in. v0.5.x sessions
+/// without an accent bitmask deserialize to this value via `Default`.
+pub const DEFAULT_ACCENT_BITS: u16 = 0x0000;
 const DEFAULT_BPM: f32 = 120.0;
 const MIN_BPM: f32 = 40.0;
 const MAX_BPM: f32 = 240.0;
 
 pub struct Sequencer {
     pub steps: [AtomicBool; STEPS],
+    /// 909-style accent flags, parallel to `steps`. A step is "accented"
+    /// iff `steps[i]` AND `accents[i]` are both true. Clearing a step also
+    /// clears its accent (handled in `set_step`/`toggle_step`) so a
+    /// previously-accented step reactivated later starts back at normal
+    /// velocity, matching how the original 909 hardware behaves.
+    pub accents: [AtomicBool; STEPS],
     /// User-controlled run flag (standalone only — ignored when `host_synced`).
     pub running: AtomicBool,
     /// Standalone BPM stored as milli-BPM so we can use an integer atomic.
@@ -45,14 +54,26 @@ pub struct Sequencer {
     /// persistence. The audio thread never touches this — only the UI
     /// thread (via `toggle_step` / `set_step`) and `initialize()`.
     persist_mirror: Arc<Mutex<u16>>,
+    /// UI-thread mirror of the accent bitmask, persisted alongside the
+    /// step bitmask. v0.5.x sessions had no accents field; nih-plug
+    /// deserialization falls back to `DEFAULT_ACCENT_BITS` (zero) so old
+    /// patterns load unchanged with no accents marked.
+    accent_persist_mirror: Arc<Mutex<u16>>,
 }
 
 impl Sequencer {
-    pub fn new(persist_mirror: Arc<Mutex<u16>>) -> Self {
+    pub fn new(
+        persist_mirror: Arc<Mutex<u16>>,
+        accent_persist_mirror: Arc<Mutex<u16>>,
+    ) -> Self {
         let initial_bits = *persist_mirror.lock();
+        let initial_accents = *accent_persist_mirror.lock();
         Self {
             steps: std::array::from_fn(|i| {
                 AtomicBool::new((initial_bits >> i) & 1 != 0)
+            }),
+            accents: std::array::from_fn(|i| {
+                AtomicBool::new((initial_accents >> i) & 1 != 0)
             }),
             running: AtomicBool::new(false),
             bpm_milli: AtomicU32::new((DEFAULT_BPM * 1000.0) as u32),
@@ -62,17 +83,20 @@ impl Sequencer {
             running_effective: AtomicBool::new(false),
             transport_probed: AtomicBool::new(false),
             persist_mirror,
+            accent_persist_mirror,
         }
     }
 
-    /// Copy the persist-mirror bitmask into the step atomics. Called once
-    /// from `Plugin::initialize()` after nih-plug has deserialized the
-    /// `#[persist]` field, so DAW-restored patterns reach the audio
-    /// thread before the first `process()` call.
+    /// Copy the persist-mirror bitmasks into the step + accent atomics.
+    /// Called once from `Plugin::initialize()` after nih-plug has
+    /// deserialized the `#[persist]` fields, so DAW-restored patterns
+    /// reach the audio thread before the first `process()` call.
     pub fn restore_from_persist(&self) {
         let bits = *self.persist_mirror.lock();
+        let accent_bits = *self.accent_persist_mirror.lock();
         for i in 0..STEPS {
             self.steps[i].store((bits >> i) & 1 != 0, Ordering::Relaxed);
+            self.accents[i].store((accent_bits >> i) & 1 != 0, Ordering::Relaxed);
         }
     }
 
@@ -107,18 +131,29 @@ impl Sequencer {
         self.steps[idx].load(Ordering::Relaxed)
     }
 
+    pub fn is_step_accented(&self, idx: usize) -> bool {
+        self.accents[idx].load(Ordering::Relaxed)
+    }
+
     /// UI-thread only: flip a step on/off and mirror the change into the
-    /// persist bitmask.
+    /// persist bitmask. Turning a step OFF also clears its accent so the
+    /// accent state can't outlive the step it was attached to.
     pub fn toggle_step(&self, idx: usize) {
         let prev = self.steps[idx].fetch_xor(true, Ordering::Relaxed);
         let mut bits = self.persist_mirror.lock();
         *bits ^= 1u16 << idx;
-        let _ = prev;
+        // Step is now `!prev`; if it just turned off, clear the accent.
+        if prev {
+            self.accents[idx].store(false, Ordering::Relaxed);
+            let mut acc_bits = self.accent_persist_mirror.lock();
+            *acc_bits &= !(1u16 << idx);
+        }
     }
 
     /// UI-thread only: set a step to an explicit state. Used by the
     /// click-drag paint path so repeated writes as the pointer moves are
-    /// idempotent (unlike `toggle_step`, which would oscillate).
+    /// idempotent (unlike `toggle_step`, which would oscillate). Setting
+    /// a step OFF also clears any accent on it.
     pub fn set_step(&self, idx: usize, on: bool) {
         self.steps[idx].store(on, Ordering::Relaxed);
         let mut bits = self.persist_mirror.lock();
@@ -126,7 +161,21 @@ impl Sequencer {
             *bits |= 1u16 << idx;
         } else {
             *bits &= !(1u16 << idx);
+            self.accents[idx].store(false, Ordering::Relaxed);
+            let mut acc_bits = self.accent_persist_mirror.lock();
+            *acc_bits &= !(1u16 << idx);
         }
+    }
+
+    /// UI-thread only: toggle the accent flag on a step. No-op when the
+    /// step itself is off — accents only have meaning on a fired step.
+    pub fn toggle_accent(&self, idx: usize) {
+        if !self.steps[idx].load(Ordering::Relaxed) {
+            return;
+        }
+        self.accents[idx].fetch_xor(true, Ordering::Relaxed);
+        let mut acc_bits = self.accent_persist_mirror.lock();
+        *acc_bits ^= 1u16 << idx;
     }
 
     pub fn current(&self) -> usize {
@@ -145,6 +194,9 @@ impl Sequencer {
 
 impl Default for Sequencer {
     fn default() -> Self {
-        Self::new(Arc::new(Mutex::new(DEFAULT_STEP_BITS)))
+        Self::new(
+            Arc::new(Mutex::new(DEFAULT_STEP_BITS)),
+            Arc::new(Mutex::new(DEFAULT_ACCENT_BITS)),
+        )
     }
 }

@@ -211,15 +211,18 @@ pub fn factory_presets() -> Vec<PresetEntry> {
                 ..Default::default()
             },
         },
-        // 909 — classic 909 character
+        // 909 — rewritten 2026-04-26 against TR-909 BD audit (Phase B,
+        // v0.5.5). Old preset had decay_ms=934 (way too long) and
+        // sub_fstart=90.8 (high). New values mirror the audit
+        // recommendations against `BPB Cassette 909/clean/bd01.wav`.
         PresetEntry {
             name: "909".into(),
             is_factory: true,
             params: ParamSnapshot {
-                decay_ms: 934.2514,
+                decay_ms: 200.0,
                 sub_gain: 0.88999975,
-                sub_fstart: 90.80015,
-                sub_fend: 50.000107,
+                sub_fstart: 65.0,
+                sub_fend: 50.0,
                 sub_sweep_ms: 71.82508,
                 sub_sweep_curve: 3.5,
                 sub_phase_offset: 90.0,
@@ -231,16 +234,19 @@ pub fn factory_presets() -> Vec<PresetEntry> {
                 mid_phase_offset: 90.0,
                 mid_decay_ms: 286.20065,
                 mid_tone_gain: 1.0,
-                mid_noise_gain: 0.0,
+                mid_noise_gain: 0.1,
                 mid_noise_color: 0.26999992,
-                top_gain: 0.0,
+                mid_noise_decay_ms: 15.0,
+                top_gain: 0.15,
                 top_decay_ms: 7.9999995,
                 top_freq: 3000.0,
                 top_bw: 2.0,
-                drift_amount: 0.1,
-                sat_mode: 0.0,
-                sat_drive: 0.09,
+                drift_amount: 0.2,
+                sat_mode: 2.0,
+                sat_drive: 0.1,
                 sat_mix: 0.5,
+                kick_clip_mode: 1.0,
+                kick_clip_drive: 0.15,
                 eq_tilt_db: 1.0,
                 eq_low_boost_db: 1.5,
                 eq_notch_freq: 350.0,

@@ -27,6 +27,7 @@ mod dsp {
     pub mod saturation;
     pub mod spectrum;
     pub mod tube;
+    pub mod voice_clip;
 }
 
 mod ui;

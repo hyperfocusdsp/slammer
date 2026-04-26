@@ -15,6 +15,7 @@ use crate::ui::knob;
 use crate::ui::theme;
 use crate::ui::widgets::{
     draw_groove, draw_inset_display, draw_led, draw_rack_ear, draw_screw, param_knob,
+    param_knob_compact,
 };
 
 pub const KNOB_SIZE: f32 = 32.0;
@@ -1155,10 +1156,16 @@ pub fn draw_mid_row(
 }
 
 /// Draw the SAT | EQ row. Returns the bottom y of the row.
-/// Result of drawing the SAT/EQ row. `next_y` is where the following row
+/// Result of drawing the SAT/EQ row. `eq_knob_y` is the y-coordinate
+/// where the big EQ knobs render their tops — used by `editor.rs` to
+/// anchor the small FILTER cluster (FILT/RES) so its 18 px knobs stay
+/// vertically centred against the 32 px EQ knobs even as the SAT cluster
+/// height changes between v0.5.x and v0.6.0. `next_y` is where the
+/// following row
 /// should start.
 pub struct SatEqRowResult {
     pub next_y: f32,
+    pub eq_knob_y: f32,
 }
 
 pub fn draw_sat_eq_row(
@@ -1168,6 +1175,12 @@ pub fn draw_sat_eq_row(
     panel_rect: egui::Rect,
     mid_bottom_y: f32,
 ) -> SatEqRowResult {
+    // Total vertical extent of the SAT/CLIP cluster (two stacked compact
+    // sub-rows of selector + 18 px knobs with `param_knob_compact` label
+    // packing). 78 px = 22 (compact knob box) + 13 (label) per sub-row,
+    // ×2, +4 inter-row spacing, +6 buffer above the STEP groove.
+    const SAT_CLUSTER_H: f32 = 78.0;
+
     let row_label_y = mid_bottom_y;
     let row_groove_y = row_label_y + 14.0;
     let row_knob_y = row_groove_y + 4.0;
@@ -1198,46 +1211,129 @@ pub fn draw_sat_eq_row(
         painter.line_segment(
             [
                 egui::pos2(eq_divider_x, row_groove_y + 2.0),
-                egui::pos2(eq_divider_x, row_knob_y + KNOB_SIZE + 30.0),
+                egui::pos2(eq_divider_x, row_knob_y + SAT_CLUSTER_H),
             ],
             egui::Stroke::new(1.0, theme::DIVIDER),
         );
     }
 
-    // SAT: LCD selector + 2 knobs
+    // SAT/CLIP cluster — two stacked sub-rows of compact LCD selectors plus
+    // small comp-cluster sized knobs in the **compact** label layout
+    // (`param_knob_compact` shaves the knob box to `diameter + 4` and drops
+    // the gap before the label). The two LCD selectors are visual siblings:
+    // master-bus saturation on top, per-voice waveshaper on bottom. The
+    // bottom sub-row's three knobs are the new v0.6.0 controls. Row height
+    // grew from `KNOB_SIZE + 30` to `SAT_CLUSTER_H` (78px) to fit the
+    // stack with a tight margin to the STEP row below; the EQ cluster on
+    // the right keeps its full-size 32 px knobs unchanged for visual
+    // continuity with the master / sub / top / mid rows above.
     let sat_rect = egui::Rect::from_min_size(
         egui::pos2(panel_rect.left() + CONTENT_LEFT, row_knob_y),
-        egui::vec2(KNOB_SPACING * 4.0 + 36.0, KNOB_SIZE + 30.0),
+        egui::vec2(KNOB_SPACING * 4.0 + 36.0, SAT_CLUSTER_H),
     );
+    const SMALL_KNOB: f32 = 18.0;
+    const SAT_MODES: &[&str] = &["OFF", "SOFt", "dIOdE", "tAPE"];
+    const CLIP_MODES: &[&str] = &["OFF", "tAnH", "dIOdE", "CUbIC"];
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(sat_rect), |ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(2.0, 4.0);
+
+        // Top sub-row: SAT MODE compact selector + small SAT DRV + SAT MIX
         ui.horizontal(|ui| {
-            crate::ui::seven_seg::lcd_selector(ui, setter, &params.sat_mode);
-            ui.add_space(12.0);
-            param_knob(
+            crate::ui::seven_seg::lcd_selector(
+                ui,
+                setter,
+                &params.sat_mode,
+                "sat_mode",
+                SAT_MODES,
+                true,
+            );
+            ui.add_space(8.0);
+            param_knob_compact(
                 ui,
                 setter,
                 "sat_d",
-                "DRIVE",
+                "DRV",
+                "Saturation drive — input gain into the master-bus shaper",
                 &params.sat_drive,
                 0.0,
                 1.0,
                 0.0,
                 |v| format!("{:.0}%", v * 100.0),
-                KNOB_SIZE,
+                SMALL_KNOB,
                 theme::SECTION_SAT,
             );
-            param_knob(
+            param_knob_compact(
                 ui,
                 setter,
                 "sat_x",
                 "MIX",
+                "Saturation mix — wet/dry blend on the master bus",
                 &params.sat_mix,
                 0.0,
                 1.0,
                 1.0,
                 |v| format!("{:.0}%", v * 100.0),
-                KNOB_SIZE,
+                SMALL_KNOB,
                 theme::SECTION_SAT,
+            );
+        });
+
+        // Bottom sub-row: CLIP MODE compact selector + the three new v0.6.0
+        // knobs. Each knob keeps its semantic section color so the eye can
+        // tell the master-bus stage (SAT, oxide red) apart from per-voice
+        // (CLIP DRV, oxide red) and from MID-related controls (N DECAY,
+        // forest green). ACCENT inherits the master row's electric blue.
+        ui.horizontal(|ui| {
+            crate::ui::seven_seg::lcd_selector(
+                ui,
+                setter,
+                &params.kick_clip_mode,
+                "clip_mode",
+                CLIP_MODES,
+                true,
+            );
+            ui.add_space(8.0);
+            param_knob_compact(
+                ui,
+                setter,
+                "clip_d",
+                "CDRV",
+                "Clip drive — per-voice waveshaper amount, applied to SUB+MID before each layer's amp envelope (909-style soft-clip)",
+                &params.kick_clip_drive,
+                0.0,
+                1.0,
+                0.0,
+                |v| format!("{:.0}%", v * 100.0),
+                SMALL_KNOB,
+                theme::SECTION_SAT,
+            );
+            param_knob_compact(
+                ui,
+                setter,
+                "n_dec",
+                "NDEC",
+                "MID noise decay — independent envelope for the noise channel. Short (15-30 ms) gates noise to attack like a real 909; longer values keep noise in the tail",
+                &params.mid_noise_decay_ms,
+                1.0,
+                400.0,
+                30.0,
+                |v| format!("{:.0}ms", v),
+                SMALL_KNOB,
+                theme::SECTION_MID,
+            );
+            param_knob_compact(
+                ui,
+                setter,
+                "acc",
+                "ACC",
+                "Accent amount — how much shift-clicked steps in the STEP grid get boosted (amplitude + decay) when the sequencer fires them",
+                &params.accent_amount,
+                0.0,
+                1.0,
+                0.0,
+                |v| format!("{:.0}%", v * 100.0),
+                SMALL_KNOB,
+                theme::SECTION_MASTER,
             );
         });
     });
@@ -1323,7 +1419,8 @@ pub fn draw_sat_eq_row(
     // render + file write is handled by `crate::export::export_one_shot`
     // in `editor.rs` when the click flag returned here is set.
     SatEqRowResult {
-        next_y: row_knob_y + KNOB_SIZE + 30.0,
+        next_y: row_knob_y + SAT_CLUSTER_H,
+        eq_knob_y: row_knob_y,
     }
 }
 
@@ -1912,11 +2009,14 @@ pub fn draw_sequencer_row(
     let _ = pads_total_w;
 
     // Snapshot pointer/button state once per frame for the drag logic.
-    let (primary_down, primary_released, pointer_pos) = ui.input(|i| {
+    // `shift_down` is read alongside so a shift-click can be detected as
+    // an accent toggle without dragging into the paint path below.
+    let (primary_down, primary_released, pointer_pos, shift_down) = ui.input(|i| {
         (
             i.pointer.primary_down(),
             i.pointer.primary_released(),
             i.pointer.interact_pos(),
+            i.modifiers.shift,
         )
     });
     // Release always ends an active paint drag, regardless of where the
@@ -1953,9 +2053,17 @@ pub fn draw_sequencer_row(
         let id = egui::Id::new(("seq_step", i));
         let resp = ui.interact(rect, id, egui::Sense::click_and_drag());
 
-        // Initial press on this pad: determine the paint mode from the
-        // current state (off → draw on, on → erase) and apply it.
-        if resp.drag_started() || resp.clicked() {
+        // Shift-click on a lit step toggles its accent without changing
+        // step state or starting a paint drag. The 909 hardware behavior
+        // is that accent is per-step velocity, so the toggle has no
+        // meaning for an off step — `Sequencer::toggle_accent` short-
+        // circuits in that case but we also bail early here so we don't
+        // suppress the paint path on shift+empty-pad clicks.
+        if shift_down && resp.clicked() && seq.is_step_on(i) {
+            seq.toggle_accent(i);
+        } else if resp.drag_started() || resp.clicked() {
+            // Initial press on this pad: determine the paint mode from
+            // the current state (off → draw on, on → erase) and apply it.
             let mode = !seq.is_step_on(i);
             ui_state.paint_mode = Some(mode);
             ui_state.last_painted = Some(i);
@@ -1964,6 +2072,7 @@ pub fn draw_sequencer_row(
 
 
         let on = seq.is_step_on(i);
+        let accented = on && seq.is_step_accented(i);
         let is_playhead = seq.is_running_effective() && i == current;
         let beat_marker = i % 4 == 0;
 
@@ -1996,6 +2105,20 @@ pub fn draw_sequencer_row(
                 egui::Stroke::new(1.5, theme::WHITE),
                 egui::StrokeKind::Outside,
             );
+        }
+
+        // Accent indicator — small bright tick at the bottom of the pad.
+        // Sits inside the rect (not as an outer stroke) so it doesn't
+        // clash with the playhead ring above. Visually unambiguous against
+        // the red body.
+        if accented {
+            let tick_h = 3.0;
+            let tick_inset = 4.0;
+            let tick_rect = egui::Rect::from_min_max(
+                egui::pos2(rect.left() + tick_inset, rect.bottom() - tick_h - 1.0),
+                egui::pos2(rect.right() - tick_inset, rect.bottom() - 1.0),
+            );
+            painter.rect_filled(tick_rect, 1.0, theme::WHITE);
         }
 
         // Beat number (1, 5, 9, 13) in dim text for orientation

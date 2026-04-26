@@ -461,8 +461,14 @@ pub fn create(
                     let sat_eq_bottom_y = sat_eq_result.next_y;
 
                     // ===== Filter (SAT/EQ right column) =====
+                    // Anchor the small FILT/RES cluster to the EQ knob
+                    // baseline so its 18 px knobs stay vertically centred
+                    // against the 32 px EQ knobs regardless of SAT cluster
+                    // height. Mirrors how the CLAP small cluster aligns
+                    // against the big MID knobs in the row above.
                     {
-                        let filter_top = sat_eq_bottom_y - panels::KNOB_SIZE - 26.0;
+                        let filter_top =
+                            sat_eq_result.eq_knob_y + (panels::KNOB_SIZE - 18.0) * 0.5;
                         panels::draw_filter_cluster(
                             ui, setter, &params, panel_rect, filter_top,
                         );
@@ -470,9 +476,14 @@ pub fn create(
 
                     // ===== DICE + BOUNCE (sequencer right column) =====
                     {
-                        // DICE sits just below the STEP groove (sat_eq_bottom_y + 18),
-                        // with enough gap to not touch the separator line.
-                        let dice_top = sat_eq_bottom_y + 23.0;
+                        // DICE sits directly under the FILTER cluster on the
+                        // right column. Anchored to `eq_knob_y` rather than
+                        // `sat_eq_bottom_y` so the SAT-cluster row extension
+                        // doesn't push DICE into the BOUNCE button.
+                        // Filter cluster top = eq_knob_y + 7, height = ~66 px
+                        // (knob row + 32 px gap + caption), so its bottom sits
+                        // at eq_knob_y + 73. DICE lands 5 px below that.
+                        let dice_top = sat_eq_result.eq_knob_y + 78.0;
                         let dice_clicked = panels::draw_dice_row(
                             ui, panel_rect, dice_top, &dice_locks,
                         );
@@ -634,6 +645,15 @@ pub fn create(
                                 logo_resp.on_hover_text("Made by Hyperfocus DSP");
                             }
                         }
+                    }
+
+                    // Final cursor override — must run AFTER every knob-panel
+                    // draw so the dropdown's PointingHand wins last-write
+                    // against the knob widget's ResizeVertical. See
+                    // `PresetBar::apply_late_cursor` for the rationale.
+                    {
+                        let bar = preset_bar.lock();
+                        bar.apply_late_cursor(ui);
                     }
                 });
         },

@@ -157,23 +157,50 @@ pub fn draw_7seg_text(painter: &egui::Painter, rect: egui::Rect, text: &str) {
 
 /// LCD-style `[<]  LABEL  [>]` mode selector wired to a `FloatParam` that
 /// holds an integer-valued mode index.
-pub fn lcd_selector(ui: &mut egui::Ui, setter: &ParamSetter, param: &FloatParam) {
-    const MODES: &[&str] = &["OFF", "SOFt", "dIOdE", "tAPE"];
+///
+/// `id_source` salts the egui Ids of the two arrow buttons so multiple
+/// selectors can coexist in the same frame without colliding. Pass a
+/// distinct string per selector (e.g. `"sat_mode"`, `"clip_mode"`).
+///
+/// `modes` is the per-index display string slice — typically the same
+/// length as the param's discrete-value range. Strings should only use
+/// glyphs covered by `seg_mask` (numerals + a small letter set).
+///
+/// `compact = false` produces the full-height variant (18×26 arrows,
+/// 56×22 LCD) used historically by SAT MODE. `compact = true` shrinks
+/// to (14×18 arrows, 44×16 LCD) and drops the trailing 8 px gap, so two
+/// compact selectors fit cleanly stacked inside one main-knob row.
+pub fn lcd_selector(
+    ui: &mut egui::Ui,
+    setter: &ParamSetter,
+    param: &FloatParam,
+    id_source: &str,
+    modes: &[&str],
+    compact: bool,
+) {
     let current = param.value() as usize;
+
+    let (btn_w, btn_h, lcd_width, lcd_height, trailing_pad) = if compact {
+        (14.0, 18.0, 44.0, 16.0, 0.0)
+    } else {
+        (18.0, 26.0, 56.0, 22.0, 8.0)
+    };
 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
 
-        let btn_w = 18.0;
-        let btn_h = 26.0;
         let (_, left_rect) = ui.allocate_space(egui::vec2(btn_w, btn_h));
         if ui.is_rect_visible(left_rect) {
             draw_lcd_arrow(ui.painter(), left_rect, "\u{25C0}");
         }
-        let left_resp = ui.interact(left_rect, egui::Id::new("sat_left"), egui::Sense::click());
-        if left_resp.clicked() {
+        let left_resp = ui.interact(
+            left_rect,
+            egui::Id::new((id_source, "left")),
+            egui::Sense::click(),
+        );
+        if left_resp.clicked() && !modes.is_empty() {
             let next = if current == 0 {
-                MODES.len() - 1
+                modes.len() - 1
             } else {
                 current - 1
             };
@@ -182,8 +209,6 @@ pub fn lcd_selector(ui: &mut egui::Ui, setter: &ParamSetter, param: &FloatParam)
             setter.end_set_parameter(param);
         }
 
-        let lcd_width = 56.0;
-        let lcd_height = 22.0;
         let (_, lcd_rect) = ui.allocate_space(egui::vec2(lcd_width, lcd_height));
         if ui.is_rect_visible(lcd_rect) {
             let painter = ui.painter();
@@ -194,7 +219,7 @@ pub fn lcd_selector(ui: &mut egui::Ui, setter: &ParamSetter, param: &FloatParam)
                 lcd_width,
                 lcd_height,
             );
-            let mode_name = MODES.get(current).unwrap_or(&"OFF");
+            let mode_name = modes.get(current).copied().unwrap_or("");
             draw_7seg_text(painter, lcd_rect, mode_name);
         }
 
@@ -202,19 +227,21 @@ pub fn lcd_selector(ui: &mut egui::Ui, setter: &ParamSetter, param: &FloatParam)
         if ui.is_rect_visible(right_rect) {
             draw_lcd_arrow(ui.painter(), right_rect, "\u{25B6}");
         }
-        let right_resp = ui.interact(right_rect, egui::Id::new("sat_right"), egui::Sense::click());
-        if right_resp.clicked() {
-            let next = if current >= MODES.len() - 1 {
-                0
-            } else {
-                current + 1
-            };
+        let right_resp = ui.interact(
+            right_rect,
+            egui::Id::new((id_source, "right")),
+            egui::Sense::click(),
+        );
+        if right_resp.clicked() && !modes.is_empty() {
+            let next = if current + 1 >= modes.len() { 0 } else { current + 1 };
             setter.begin_set_parameter(param);
             setter.set_parameter(param, next as f32);
             setter.end_set_parameter(param);
         }
 
-        ui.add_space(8.0);
+        if trailing_pad > 0.0 {
+            ui.add_space(trailing_pad);
+        }
     });
 }
 
