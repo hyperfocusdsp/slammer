@@ -1,3 +1,3 @@
 fn main() {
-    slammer::run_standalone();
+    niner::run_standalone();
 }

@@ -1,15 +1,15 @@
-//! All parameter definitions for Slammer.
+//! All parameter definitions for Niner.
 //!
 //! This module owns two closely-related types:
 //!
-//! * [`SlammerParams`] — the live, host-visible nih_plug parameter tree.
+//! * [`NinerParams`] — the live, host-visible nih_plug parameter tree.
 //! * [`ParamSnapshot`] — a plain-data mirror used for preset round-tripping.
 //!
 //! Adding a new automatable parameter means touching exactly three places
 //! in this file:
 //!
-//! 1. A field on `SlammerParams` (with its `#[id = "..."]` attribute).
-//! 2. Its construction in `impl Default for SlammerParams`.
+//! 1. A field on `NinerParams` (with its `#[id = "..."]` attribute).
+//! 2. Its construction in `impl Default for NinerParams`.
 //! 3. A field on `ParamSnapshot` plus matching lines in `capture`/`apply`.
 //!
 //! Builder helpers (`hz_knob`, `ms_knob`, `pct_knob`, `db_knob`) collapse
@@ -88,7 +88,7 @@ fn db_knob(name: &str, default_db: f32, min_db: f32, max_db: f32) -> FloatParam 
 // ---------------------------------------------------------------------------
 
 #[derive(Params)]
-pub struct SlammerParams {
+pub struct NinerParams {
     #[persist = "editor-state"]
     pub editor_state: Arc<EguiState>,
 
@@ -176,7 +176,7 @@ pub struct SlammerParams {
     pub mid_noise_color: FloatParam,
 
     /// Decay time for the MID noise channel's own envelope. Real 909 kicks
-    /// gate noise to a short attack burst (15-30 ms); legacy slammer ran
+    /// gate noise to a short attack burst (15-30 ms); legacy versions ran
     /// noise off `mid_decay_ms` so it sustained alongside the tone.
     #[id = "mid_noise_dec"]
     pub mid_noise_decay_ms: FloatParam,
@@ -303,7 +303,7 @@ pub struct SlammerParams {
 /// applied **after** the engine in the plugin chain (post-comp, post-warmth)
 /// and the offline exporter mirrors that, so letting the engine apply it too
 /// would double the gain.
-pub fn collect_kick_params(p: &SlammerParams) -> KickParams {
+pub fn collect_kick_params(p: &NinerParams) -> KickParams {
     KickParams {
         master_gain: 1.0,
         decay_ms: p.decay_ms.value(),
@@ -360,7 +360,7 @@ pub fn collect_kick_params(p: &SlammerParams) -> KickParams {
     }
 }
 
-impl Default for SlammerParams {
+impl Default for NinerParams {
     fn default() -> Self {
         // EguiState size is the LOGICAL window size. Actual on-screen scaling
         // is applied by baseview's WindowScalePolicy — for standalone the
@@ -701,7 +701,7 @@ impl Default for SlammerParams {
 // Plain-data snapshot for preset round-tripping
 // ---------------------------------------------------------------------------
 
-/// Plain-data mirror of every automatable parameter in `SlammerParams`.
+/// Plain-data mirror of every automatable parameter in `NinerParams`.
 ///
 /// Captures and applies via `ParamSetter` so host automation/undo see the
 /// changes. `master_volume` is stored as `Option<f32>`: new presets capture
@@ -778,7 +778,7 @@ pub struct ParamSnapshot {
 
 impl ParamSnapshot {
     /// Read current values off every persisted param.
-    pub fn capture(p: &SlammerParams) -> Self {
+    pub fn capture(p: &NinerParams) -> Self {
         Self {
             decay_ms: p.decay_ms.value(),
 
@@ -847,7 +847,7 @@ impl ParamSnapshot {
 
     /// Push every field of the snapshot back into the live params, going
     /// through `ParamSetter` so host automation/undo see the changes.
-    pub fn apply(&self, setter: &ParamSetter, p: &SlammerParams) {
+    pub fn apply(&self, setter: &ParamSetter, p: &NinerParams) {
         macro_rules! set {
             ($param:expr, $val:expr) => {
                 setter.begin_set_parameter(&$param);
@@ -934,7 +934,7 @@ mod clap_param_tests {
 
     #[test]
     fn clap_params_defaults() {
-        let p = SlammerParams::default();
+        let p = NinerParams::default();
         assert!(!p.clap_on.value());
         assert!((p.clap_level.value() - 0.9).abs() < 1e-4);
         assert!((p.clap_freq.value() - 1200.0).abs() < 1.0);
@@ -967,7 +967,7 @@ mod clap_param_tests {
 
     #[test]
     fn dj_filter_and_metal_defaults() {
-        let p = SlammerParams::default();
+        let p = NinerParams::default();
         assert!((p.dj_filter_pos.value()).abs() < 1e-4);
         assert!((p.dj_filter_res.value()).abs() < 1e-4);
         assert!(!p.dj_filter_pre.value());

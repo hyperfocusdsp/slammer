@@ -11,7 +11,7 @@ use nih_plug_egui::egui;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-use crate::params::{ParamSnapshot, SlammerParams};
+use crate::params::{ParamSnapshot, NinerParams};
 use crate::presets::{PresetEntry, PresetManager};
 use crate::ui::theme;
 use crate::ui::widgets::{draw_inset_display, preset_arrow_btn};
@@ -168,7 +168,7 @@ impl PresetBar {
         &mut self,
         ui: &mut egui::Ui,
         setter: &ParamSetter,
-        params: &SlammerParams,
+        params: &NinerParams,
         preset_manager: &Arc<Mutex<PresetManager>>,
         origin_x: f32,
         header_center_y: f32,
@@ -407,7 +407,7 @@ impl PresetBar {
         &mut self,
         ui: &mut egui::Ui,
         _setter: &ParamSetter,
-        params: &SlammerParams,
+        params: &NinerParams,
         preset_manager: &Arc<Mutex<PresetManager>>,
         led_rect: egui::Rect,
     ) {
@@ -463,7 +463,7 @@ impl PresetBar {
         &mut self,
         ui: &mut egui::Ui,
         _setter: &ParamSetter,
-        _params: &SlammerParams,
+        _params: &NinerParams,
         led_rect: egui::Rect,
         display_w: f32,
         selected_name: &str,
@@ -495,7 +495,7 @@ impl PresetBar {
         &mut self,
         ui: &mut egui::Ui,
         setter: &ParamSetter,
-        params: &SlammerParams,
+        params: &NinerParams,
         led_rect: egui::Rect,
         display_w: f32,
         selected_name: &str,
@@ -691,7 +691,7 @@ impl PresetBar {
     fn commit_save(
         &mut self,
         preset_manager: &Arc<Mutex<PresetManager>>,
-        params: &SlammerParams,
+        params: &NinerParams,
     ) {
         let name = self.state.edit_buffer.trim().to_owned();
         if !name.is_empty() {

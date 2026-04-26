@@ -1,4 +1,4 @@
-//! The `Plugin` impl for Slammer — glues together parameters, DSP engine,
+//! The `Plugin` impl for Niner — glues together parameters, DSP engine,
 //! telemetry, and the egui editor. Parameter definitions themselves live in
 //! [`crate::params`]; DSP is in [`crate::dsp`].
 
@@ -12,7 +12,7 @@ use crate::dsp::master_bus::MasterBus;
 use crate::dsp::spectrum::SpectrumAnalyzer;
 use crate::dsp::tube::TubeWarmth;
 use crate::logging;
-use crate::params::{collect_kick_params, SlammerParams};
+use crate::params::{collect_kick_params, NinerParams};
 use crate::presets::PresetManager;
 use crate::sequencer::{self, Sequencer};
 use crate::util::messages::{self, UiToDsp};
@@ -44,8 +44,8 @@ fn soft_clip_safety(x: f32) -> f32 {
     }
 }
 
-pub struct Slammer {
-    params: Arc<SlammerParams>,
+pub struct Niner {
+    params: Arc<NinerParams>,
     engine: KickEngine,
     master_bus: MasterBus,
     /// Master-volume-driven tube warmth stage. Engages automatically when
@@ -87,7 +87,7 @@ pub struct Slammer {
     /// play-toggle rising edge and reset to step 1.
     seq_running_prev: bool,
     /// Glitch-bisect knob, set once in `initialize()` from the
-    /// `SLAMMER_DISABLE_SPECTRUM` env var. When true, the audio thread
+    /// `NINER_DISABLE_SPECTRUM` env var. When true, the audio thread
     /// skips the spectrum analyzer's `feed_sample` call (which runs an
     /// FFT every 1024 samples). Lets us A/B test whether the FFT is the
     /// source of the v0.6.0 RT-only crunchiness — Autokit on the same
@@ -95,11 +95,11 @@ pub struct Slammer {
     spectrum_disabled: bool,
 }
 
-impl Default for Slammer {
+impl Default for Niner {
     fn default() -> Self {
         let (telem_tx, telem_rx) = telemetry::channel();
         let (ui_tx, ui_rx) = messages::channel();
-        let params = Arc::new(SlammerParams::default());
+        let params = Arc::new(NinerParams::default());
         let sequencer = Arc::new(Sequencer::new(
             Arc::clone(&params.seq_steps),
             Arc::clone(&params.seq_accents),
@@ -133,8 +133,8 @@ impl Default for Slammer {
     }
 }
 
-impl Plugin for Slammer {
-    const NAME: &'static str = "Slammer";
+impl Plugin for Niner {
+    const NAME: &'static str = "Niner";
     const VENDOR: &'static str = "Hyperfocus DSP";
     const URL: &'static str = "https://hyperfocusdsp.com";
     const EMAIL: &'static str = "hello@hyperfocusdsp.com";
@@ -187,7 +187,7 @@ impl Plugin for Slammer {
         self.sample_rate = buffer_config.sample_rate;
         logging::init();
         tracing::info!(
-            "Slammer v{} initialized — sr: {}",
+            "Niner v{} initialized — sr: {}",
             Self::VERSION,
             self.sample_rate
         );
@@ -205,12 +205,12 @@ impl Plugin for Slammer {
 
         // Bisect knob for the v0.6.0 glitch hunt. Anything set to a
         // non-empty, non-"0" value disables the audio-thread FFT.
-        self.spectrum_disabled = std::env::var("SLAMMER_DISABLE_SPECTRUM")
+        self.spectrum_disabled = std::env::var("NINER_DISABLE_SPECTRUM")
             .map(|v| !v.is_empty() && v != "0")
             .unwrap_or(false);
         if self.spectrum_disabled {
             tracing::warn!(
-                "SLAMMER_DISABLE_SPECTRUM is set — audio-thread spectrum FFT is OFF. \
+                "NINER_DISABLE_SPECTRUM is set — audio-thread spectrum FFT is OFF. \
                  Spectrum display will not update."
             );
         }
@@ -484,10 +484,10 @@ impl Plugin for Slammer {
     }
 }
 
-impl ClapPlugin for Slammer {
-    const CLAP_ID: &'static str = "com.hyperfocusdsp.slammer";
+impl ClapPlugin for Niner {
+    const CLAP_ID: &'static str = "com.hyperfocusdsp.niner";
     const CLAP_DESCRIPTION: Option<&'static str> = Some("Kick drum synthesizer");
-    const CLAP_MANUAL_URL: Option<&'static str> = Some("https://hyperfocusdsp.com/slammer");
+    const CLAP_MANUAL_URL: Option<&'static str> = Some("https://hyperfocusdsp.com/niner");
     const CLAP_SUPPORT_URL: Option<&'static str> = Some("https://hyperfocusdsp.com/support");
     const CLAP_FEATURES: &'static [ClapFeature] = &[
         ClapFeature::Instrument,
@@ -496,10 +496,11 @@ impl ClapPlugin for Slammer {
     ];
 }
 
-impl Vst3Plugin for Slammer {
-    // Unchanged from v0.4.x to preserve DAW-project compatibility — class ID
-    // is the host-side identity for project recall and is not user-visible.
-    const VST3_CLASS_ID: [u8; 16] = *b"SlammerKickSy01\0";
+impl Vst3Plugin for Niner {
+    // Hard break in v0.7.0: the rebrand from Slammer to Niner forces a new
+    // class ID. Existing DAW projects saved with the old "SlammerKickSy01\0"
+    // ID will not auto-find this plugin and must be re-wired.
+    const VST3_CLASS_ID: [u8; 16] = *b"NinerKickSynth01";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
         Vst3SubCategory::Instrument,
         Vst3SubCategory::Synth,
@@ -621,9 +622,9 @@ mod tests {
             sample_format: hound::SampleFormat::Float,
         };
         let path = if bypass_spectrum {
-            "/tmp/slammer_offline_no_spectrum.wav"
+            "/tmp/niner_offline_no_spectrum.wav"
         } else {
-            "/tmp/slammer_offline_full_chain.wav"
+            "/tmp/niner_offline_full_chain.wav"
         };
         if let Ok(mut wav) = hound::WavWriter::create(path, spec) {
             for &s in &out {
@@ -708,7 +709,7 @@ mod tests {
     /// Bisect helper for the v0.6.0 glitch hunt: render with custom kick
     /// params (e.g. 909 preset values, heavy drift) and comp/limiter
     /// engaged to make sure the bug isn't hiding in a non-default preset.
-    /// Writes WAV to /tmp/slammer_offline_<tag>.wav.
+    /// Writes WAV to /tmp/niner_offline_<tag>.wav.
     fn render_with_params(
         seconds: f32,
         bpm: f32,
@@ -793,7 +794,7 @@ mod tests {
             bits_per_sample: 32,
             sample_format: hound::SampleFormat::Float,
         };
-        let path = format!("/tmp/slammer_offline_{tag}.wav");
+        let path = format!("/tmp/niner_offline_{tag}.wav");
         if let Ok(mut wav) = hound::WavWriter::create(&path, spec) {
             for &s in &out {
                 let _ = wav.write_sample(s);

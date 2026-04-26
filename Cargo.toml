@@ -2,22 +2,22 @@
 members = ["xtask"]
 
 [package]
-name = "slammer"
-version = "0.6.0"
+name = "niner"
+version = "0.7.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Kick drum synthesizer plugin"
 authors = ["Hyperfocus DSP <hello@hyperfocusdsp.com>"]
 homepage = "https://hyperfocusdsp.com"
-repository = "https://github.com/hyperfocusdsp/slammer"
+repository = "https://github.com/hyperfocusdsp/niner"
 
 [lib]
-# `cdylib` for VST3/CLAP bundles; `rlib` so the `slammer-standalone` binary
+# `cdylib` for VST3/CLAP bundles; `rlib` so the `niner-standalone` binary
 # can link against the same lib (no duplicated module trees).
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "slammer-standalone"
+name = "niner-standalone"
 path = "src/main.rs"
 
 [dependencies]
@@ -84,7 +84,7 @@ strip = "symbols"
 # master that includes RustAudio/baseview#212 — "Implement keyboard event
 # hook on Windows". The pinned nih-plug commit predates this fix, so
 # standalone Windows builds receive zero keyboard events (confirmed via
-# empty `[keyboard]` diagnostic in slammer.log). The PR is a pure add
+# empty `[keyboard]` diagnostic in niner.log). The PR is a pure add
 # (new `src/win/hook.rs` + two field additions to `WindowState`) with no
 # public API change, so both dependents continue to compile unchanged.
 #

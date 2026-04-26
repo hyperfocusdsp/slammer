@@ -14,7 +14,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 
 use crate::export::{self, ExportOutcome};
-use crate::params::SlammerParams;
+use crate::params::NinerParams;
 use crate::presets::PresetManager;
 use crate::sequencer::Sequencer;
 use crate::ui::panels::{self, CONTENT_LEFT, KNOB_SPACING};
@@ -98,7 +98,7 @@ impl SpectrumDisplay {
 #[allow(clippy::too_many_arguments)]
 pub fn create(
     editor_state: Arc<EguiState>,
-    params: Arc<SlammerParams>,
+    params: Arc<NinerParams>,
     telemetry_rx: Option<TelemetryConsumer>,
     ui_tx: Option<rtrb::Producer<UiToDsp>>,
     preset_manager: Arc<Mutex<PresetManager>>,
@@ -194,7 +194,7 @@ pub fn create(
                     {
                         let mut tex = logo_texture.lock();
                         if tex.is_none() {
-                            let bytes = include_bytes!("../../assets/slammer_logo.png");
+                            let bytes = include_bytes!("../../assets/niner_logo.png");
                             if let Ok(img) = image::load_from_memory(bytes) {
                                 let rgba = img.to_rgba8();
                                 let (w, h) = rgba.dimensions();
@@ -204,7 +204,7 @@ pub fn create(
                                     &pixels,
                                 );
                                 *tex = Some(ctx.load_texture(
-                                    "slammer_logo",
+                                    "niner_logo",
                                     color_image,
                                     egui::TextureOptions::LINEAR,
                                 ));
@@ -236,7 +236,7 @@ pub fn create(
                     // header to the left of "KICK SYNTHESIZER" so the footer
                     // chrome stays clean. Mirrors the SquelchBox `band1.rs`
                     // pattern; the new value is mirrored to a sidecar file so
-                    // `slammer-launch` can forward it as `--dpi-scale` on the
+                    // `niner-launch` can forward it as `--dpi-scale` on the
                     // next standalone launch (DAWs honour `#[persist]` directly).
                     {
                         let scale = *params.ui_scale.lock();
@@ -263,7 +263,7 @@ pub fn create(
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .on_hover_text(
                                 "UI scale — click to cycle (1× / 1.5× / 2×).\n\
-                                 Reopen the plugin (or restart slammer) to apply.",
+                                 Reopen the plugin (or restart niner) to apply.",
                             );
                         let color = if resp.hovered() {
                             theme::WHITE
@@ -325,7 +325,7 @@ pub fn create(
                     // translates anything). We OR in a GetAsyncKeyState poll,
                     // gated by our own `typing` guard and a foreground-thread
                     // check inside `win_keys`, so the fallback only fires
-                    // when Slammer is the focused app.
+                    // when Niner is the focused app.
                     let button_fired = panels::test_button(ui, panel_rect, header_center_y);
                     let t_egui = !typing && ui.input(|i| i.key_pressed(egui::Key::T));
                     #[cfg(target_os = "windows")]
@@ -550,7 +550,7 @@ pub fn create(
                                 let export_state_worker = Arc::clone(&export_state);
                                 let params_worker = Arc::clone(&params);
                                 let spawn_result = std::thread::Builder::new()
-                                    .name("slammer-bounce".into())
+                                    .name("niner-bounce".into())
                                     .spawn(move || {
                                         let outcome = {
                                             let mut state = export_state_worker.lock();

@@ -1,4 +1,4 @@
-//! File-based logging for Slammer via `tracing`.
+//! File-based logging for Niner via `tracing`.
 //!
 //! Writes to a platform-appropriate data directory (see `util::paths`).
 //! Initialization is idempotent (`Once`), panic-free, and any failure is
@@ -30,16 +30,21 @@ static INIT: Once = Once::new();
 pub fn init() {
     INIT.call_once(|| {
         if let Err(e) = try_init() {
-            eprintln!("Slammer: logging init failed: {e}");
+            eprintln!("Niner: logging init failed: {e}");
         }
     });
 }
 
 fn try_init() -> Result<(), String> {
-    let dir = paths::slammer_log_dir();
+    // Migrate the legacy ~/.local/share/slammer (or platform equivalent)
+    // directory to the new niner location on first run after the rebrand.
+    // No-op once the new dir exists; never panics.
+    paths::migrate_legacy_data_dir();
+
+    let dir = paths::niner_log_dir();
     fs::create_dir_all(&dir).map_err(|e| format!("create log dir {dir:?}: {e}"))?;
 
-    let log_path = dir.join("slammer.log");
+    let log_path = dir.join("niner.log");
     rotate_if_needed(&log_path);
 
     let file = OpenOptions::new()
@@ -50,9 +55,9 @@ fn try_init() -> Result<(), String> {
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         if cfg!(debug_assertions) {
-            EnvFilter::new("slammer=debug,slammer_standalone=debug")
+            EnvFilter::new("niner=debug,niner_standalone=debug")
         } else {
-            EnvFilter::new("slammer=info,slammer_standalone=info")
+            EnvFilter::new("niner=info,niner_standalone=info")
         }
     });
 
@@ -71,7 +76,7 @@ fn try_init() -> Result<(), String> {
     // set_global_default fails if a subscriber is already set (e.g. in tests).
     // That's not fatal for us — just move on.
     let _ = tracing::subscriber::set_global_default(subscriber);
-    tracing::info!("Slammer logger initialized — log file: {:?}", log_path);
+    tracing::info!("Niner logger initialized — log file: {:?}", log_path);
 
     install_panic_hook(log_path);
     Ok(())
@@ -105,7 +110,7 @@ fn install_panic_hook(log_path: PathBuf) {
             backtrace
         );
         eprintln!(
-            "\n=== SLAMMER PANIC ===\nat {}: {}\nlog: {}\nbacktrace:\n{}\n",
+            "\n=== NINER PANIC ===\nat {}: {}\nlog: {}\nbacktrace:\n{}\n",
             location,
             payload,
             log_path.display(),
@@ -169,5 +174,5 @@ impl Write for SafeWriter {
 /// Return the log file path (for diagnostics / about dialog).
 #[allow(dead_code)]
 pub fn log_file_path() -> PathBuf {
-    paths::slammer_log_dir().join("slammer.log")
+    paths::niner_log_dir().join("niner.log")
 }

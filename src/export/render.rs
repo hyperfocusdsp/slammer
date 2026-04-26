@@ -33,7 +33,7 @@ pub const EXPORT_SR: f32 = 44_100.0;
 /// also where the master-bus limiter sits, so the two stay consistent.
 const NORMALIZE_TARGET: f32 = 0.891_250_9; // 10^(-1/20)
 
-/// Hard cap for how many samples we ever render. No slammer preset can
+/// Hard cap for how many samples we ever render. No niner preset can
 /// produce a tail longer than ~500 ms, so 3 s is comfortably sufficient
 /// while also protecting against a pathological config that would otherwise
 /// loop forever.
@@ -62,7 +62,7 @@ const BLOCK: usize = 256;
 
 /// Snapshot of the live comp / warmth / volume values the render needs to
 /// mirror `plugin.rs`'s per-sample loop. Collected by the caller from the
-/// live `SlammerParams`.
+/// live `NinerParams`.
 #[derive(Clone, Copy, Debug)]
 pub struct MasterChainSnapshot {
     pub comp_amount: f32,

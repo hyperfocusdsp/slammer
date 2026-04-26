@@ -19,16 +19,16 @@ jobs:
         include:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            artifact: slammer-linux-x86_64
+            artifact: niner-linux-x86_64
           - os: macos-14
             target: aarch64-apple-darwin
-            artifact: slammer-macos-arm64
+            artifact: niner-macos-arm64
           - os: macos-14
             target: x86_64-apple-darwin
-            artifact: slammer-macos-x86_64
+            artifact: niner-macos-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: slammer-windows-x86_64
+            artifact: niner-windows-x86_64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -51,7 +51,7 @@ jobs:
         shell: bash
         env:
           BUILD_TARGET: ${{ matrix.target }}
-        run: cargo xtask bundle slammer --release --target "$BUILD_TARGET"
+        run: cargo xtask bundle niner --release --target "$BUILD_TARGET"
 
       - name: Package artifacts (Unix)
         if: runner.os != 'Windows'
@@ -60,14 +60,14 @@ jobs:
           ARTIFACT_NAME: ${{ matrix.artifact }}
         run: |
           mkdir -p "staging/${ARTIFACT_NAME}"
-          cp -r target/bundled/slammer.vst3 "staging/${ARTIFACT_NAME}/"
-          cp -r target/bundled/slammer.clap "staging/${ARTIFACT_NAME}/"
-          cp "target/${BUILD_TARGET}/release/slammer-standalone" "staging/${ARTIFACT_NAME}/" || true
+          cp -r target/bundled/niner.vst3 "staging/${ARTIFACT_NAME}/"
+          cp -r target/bundled/niner.clap "staging/${ARTIFACT_NAME}/"
+          cp "target/${BUILD_TARGET}/release/niner-standalone" "staging/${ARTIFACT_NAME}/" || true
           cp install.sh "staging/${ARTIFACT_NAME}/"
           cp CHANGELOG.md README.md "staging/${ARTIFACT_NAME}/"
           if [[ "$RUNNER_OS" == "macOS" ]]; then
-            cp scripts/slammer-macos.sh "staging/${ARTIFACT_NAME}/"
-            chmod +x "staging/${ARTIFACT_NAME}/slammer-macos.sh"
+            cp scripts/niner-macos.sh "staging/${ARTIFACT_NAME}/"
+            chmod +x "staging/${ARTIFACT_NAME}/niner-macos.sh"
           fi
           chmod +x "staging/${ARTIFACT_NAME}/install.sh" || true
           cd staging && tar czf "../${ARTIFACT_NAME}.tar.gz" "${ARTIFACT_NAME}" && cd ..
@@ -80,9 +80,9 @@ jobs:
           ARTIFACT_NAME: ${{ matrix.artifact }}
         run: |
           mkdir -p "staging/${ARTIFACT_NAME}"
-          cp -r target/bundled/slammer.vst3 "staging/${ARTIFACT_NAME}/"
-          cp -r target/bundled/slammer.clap "staging/${ARTIFACT_NAME}/"
-          cp "target/${BUILD_TARGET}/release/slammer-standalone.exe" "staging/${ARTIFACT_NAME}/" || true
+          cp -r target/bundled/niner.vst3 "staging/${ARTIFACT_NAME}/"
+          cp -r target/bundled/niner.clap "staging/${ARTIFACT_NAME}/"
+          cp "target/${BUILD_TARGET}/release/niner-standalone.exe" "staging/${ARTIFACT_NAME}/" || true
           cp install.bat "staging/${ARTIFACT_NAME}/"
           cp CHANGELOG.md README.md "staging/${ARTIFACT_NAME}/"
           cd staging && 7z a "../${ARTIFACT_NAME}.zip" "${ARTIFACT_NAME}" && cd ..
