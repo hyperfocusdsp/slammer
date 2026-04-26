@@ -1,5 +1,5 @@
 #!/bin/bash
-# Launch Slammer standalone on macOS with a safe audio buffer size.
+# Launch Niner standalone on macOS with a safe audio buffer size.
 #
 # CoreAudio on Apple Silicon delivers variable-sized buffers that can
 # exceed any configured period size, which crashes nih-plug's CPAL
@@ -12,4 +12,4 @@
 # Upstream issue: https://github.com/robbert-vdh/nih-plug/issues/266
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-exec "$DIR/slammer-standalone" --period-size 4096 "$@"
+exec "$DIR/niner-standalone" --period-size 4096 "$@"

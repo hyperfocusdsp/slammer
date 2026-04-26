@@ -218,7 +218,7 @@ mod tests {
     use std::io::Read;
 
     fn tmp(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("slammer_test_{name}"))
+        std::env::temp_dir().join(format!("niner_test_{name}"))
     }
 
     fn sine(n: usize, freq: f32) -> (Vec<f32>, Vec<f32>) {

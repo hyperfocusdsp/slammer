@@ -26,14 +26,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::params::{collect_kick_params, SlammerParams};
+use crate::params::{collect_kick_params, NinerParams};
 use crate::util::paths;
 
 pub use render::MasterChainSnapshot;
 pub use writer::Format;
 
 /// Name of the on-disk config file that remembers the last export location
-/// and format. Lives under `slammer_data_dir()`, independent of presets.
+/// and format. Lives under `niner_data_dir()`, independent of presets.
 const EXPORT_CONFIG_FILE: &str = "export_config.json";
 
 /// Current schema version for the config file.
@@ -85,7 +85,7 @@ pub enum ExportOutcome {
 /// defaults on any parse/IO error — a missing or corrupted config file
 /// should never prevent the feature from working.
 pub fn load_export_state() -> ExportState {
-    let path = paths::slammer_data_dir().join(EXPORT_CONFIG_FILE);
+    let path = paths::niner_data_dir().join(EXPORT_CONFIG_FILE);
     let contents = match fs::read_to_string(&path) {
         Ok(s) => s,
         Err(_) => return ExportState::default(),
@@ -114,7 +114,7 @@ pub fn load_export_state() -> ExportState {
 /// *current* bounce (which has already been written successfully) must not
 /// be reported as failed.
 pub fn save_export_state(state: &ExportState) {
-    let dir = paths::slammer_data_dir();
+    let dir = paths::niner_data_dir();
     if let Err(e) = fs::create_dir_all(&dir) {
         tracing::warn!("export: couldn't create data dir {:?}: {}", dir, e);
         return;
@@ -139,8 +139,8 @@ pub fn save_export_state(state: &ExportState) {
 
 /// Default directory for new bounces on a fresh install. Prefers the
 /// per-user Music folder (`~/Music`, `~/Library/Music`, `%USERPROFILE%/Music`)
-/// with a `Slammer Bounces` subfolder, so the user's own library stays tidy.
-/// Falls back to the slammer data directory's `bounces` subdir if the
+/// with a `Niner Bounces` subfolder, so the user's own library stays tidy.
+/// Falls back to the niner data directory's `bounces` subdir if the
 /// platform doesn't expose a music folder.
 ///
 /// Creates the directory if it doesn't already exist. If creation fails
@@ -149,8 +149,8 @@ pub fn save_export_state(state: &ExportState) {
 pub fn default_bounces_dir() -> PathBuf {
     let base = directories::UserDirs::new()
         .and_then(|u| u.audio_dir().map(|p| p.to_path_buf()))
-        .unwrap_or_else(paths::slammer_data_dir);
-    let dir = base.join("Slammer Bounces");
+        .unwrap_or_else(paths::niner_data_dir);
+    let dir = base.join("Niner Bounces");
     let _ = fs::create_dir_all(&dir);
     dir
 }
@@ -173,13 +173,13 @@ pub fn suggested_filename(format: Format) -> String {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
 
-    format!("slammer_{tag}_{seq:02}.{}", format.extension())
+    format!("niner_{tag}_{seq:02}.{}", format.extension())
 }
 
 /// End-to-end BOUNCE click handler. Pops a native save dialog, renders, and
 /// writes the file. Updates `state` on success so the next call opens the
 /// dialog at the same directory.
-pub fn export_one_shot(state: &mut ExportState, params: &SlammerParams) -> ExportOutcome {
+pub fn export_one_shot(state: &mut ExportState, params: &NinerParams) -> ExportOutcome {
     let suggested = suggested_filename(state.last_format);
     let filter_main = match state.last_format {
         Format::Wav => ("WAV", &["wav"][..]),
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn suggested_filename_has_expected_prefix_and_extension() {
         let name = suggested_filename(Format::Wav);
-        assert!(name.starts_with("slammer_"));
+        assert!(name.starts_with("niner_"));
         assert!(name.ends_with(".wav"));
         let aiff = suggested_filename(Format::Aiff);
         assert!(aiff.ends_with(".aiff"));

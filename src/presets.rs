@@ -1,12 +1,12 @@
-//! Factory presets and user preset I/O for Slammer.
+//! Factory presets and user preset I/O for Niner.
 //!
 //! A preset is a `(name, ParamSnapshot)` pair. The snapshot type itself lives
-//! in `plugin.rs` next to `SlammerParams` so there's a single source of truth
+//! in `plugin.rs` next to `NinerParams` so there's a single source of truth
 //! for every persisted parameter. This module is only responsible for:
 //!
 //! * Providing the built-in factory presets.
 //! * Reading/writing user presets as JSON in a platform-appropriate data
-//!   directory (see `util::paths::slammer_preset_dir`).
+//!   directory (see `util::paths::niner_preset_dir`).
 //! * Exposing a merged factory+user list to the UI.
 
 use serde::{Deserialize, Serialize};
@@ -691,14 +691,14 @@ pub struct PresetManager {
     factory: Vec<PresetEntry>,
     user: Vec<PresetEntry>,
     /// Factory preset names the user has deleted. Filtered out of
-    /// `list_all`. Persisted to `slammer_hidden_presets_file()`.
+    /// `list_all`. Persisted to `niner_hidden_presets_file()`.
     hidden_factories: HashSet<String>,
     dir: PathBuf,
 }
 
 impl PresetManager {
     pub fn new() -> Self {
-        let dir = paths::slammer_preset_dir();
+        let dir = paths::niner_preset_dir();
         let factory = factory_presets();
         let mut mgr = Self {
             factory,
@@ -809,7 +809,7 @@ impl PresetManager {
 /// Load the set of factory preset names the user has explicitly hidden.
 /// Missing file → empty set. IO errors are logged and swallowed.
 fn load_hidden_factories() -> HashSet<String> {
-    let path = paths::slammer_hidden_presets_file();
+    let path = paths::niner_hidden_presets_file();
     let Ok(data) = fs::read_to_string(&path) else {
         return HashSet::new();
     };
@@ -824,7 +824,7 @@ fn load_hidden_factories() -> HashSet<String> {
 /// IO errors are logged and swallowed so a read-only config dir never
 /// crashes the plugin.
 fn persist_hidden_factories(set: &HashSet<String>) {
-    let path = paths::slammer_hidden_presets_file();
+    let path = paths::niner_hidden_presets_file();
     if let Some(parent) = path.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
             tracing::warn!(?e, "failed to create hidden-presets dir");
@@ -842,7 +842,7 @@ fn persist_hidden_factories(set: &HashSet<String>) {
 /// Remember the name of the last-selected preset so the standalone reopens
 /// with the same choice. Best-effort — IO errors are logged and swallowed.
 pub fn save_last_preset_name(name: &str) {
-    let path = paths::slammer_last_preset_file();
+    let path = paths::niner_last_preset_file();
     if let Some(parent) = path.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
             tracing::warn!(?e, "failed to create last-preset dir");
@@ -856,7 +856,7 @@ pub fn save_last_preset_name(name: &str) {
 
 /// Read back the last-selected preset name, if any.
 pub fn load_last_preset_name() -> Option<String> {
-    let path = paths::slammer_last_preset_file();
+    let path = paths::niner_last_preset_file();
     let data = fs::read_to_string(&path).ok()?;
     let trimmed = data.trim();
     if trimmed.is_empty() {
@@ -923,7 +923,7 @@ mod tests {
 
     /// Round-trip: a snapshot serialized to JSON and read back equals itself.
     /// This is the poor-man's version of the full capture → apply → capture
-    /// round-trip (which needs a real `ParamSetter` wired to `SlammerParams`
+    /// round-trip (which needs a real `ParamSetter` wired to `NinerParams`
     /// and is covered by in-host manual testing). The serde path is the only
     /// part that can break silently when fields are added.
     #[test]

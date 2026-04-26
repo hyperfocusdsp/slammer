@@ -1,18 +1,18 @@
 # Maintainer: Hornfisk <hornfisk@users.noreply.github.com>
-pkgname=slammer
-pkgver=0.6.0
+pkgname=niner
+pkgver=0.7.0
 pkgrel=1
 pkgdesc="Three-layer synthesized kick drum plugin (VST3, CLAP, Standalone)"
 arch=('x86_64')
-url="https://github.com/hyperfocusdsp/slammer"
+url="https://github.com/hyperfocusdsp/niner"
 license=('GPL-3.0-or-later')
 depends=('gcc-libs' 'glibc' 'libxcb' 'libx11' 'libxcursor' 'libxrandr' 'libxi' 'freetype2' 'fontconfig' 'alsa-lib' 'gtk3')
 makedepends=('cargo' 'pkgconf')
 optdepends=(
   'pipewire-jack: low-latency standalone audio backend'
 )
-provides=('slammer-vst3' 'slammer-clap' 'slammer-standalone')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/hyperfocusdsp/slammer/archive/refs/tags/v$pkgver.tar.gz")
+provides=('niner-vst3' 'niner-clap' 'niner-standalone')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/hyperfocusdsp/niner/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 
 prepare() {
@@ -25,8 +25,8 @@ build() {
   cd "$pkgname-$pkgver"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
-  cargo xtask bundle slammer --release
-  cargo build --release --frozen --bin slammer-standalone
+  cargo xtask bundle niner --release
+  cargo build --release --frozen --bin niner-standalone
 }
 
 check() {
@@ -40,13 +40,13 @@ package() {
 
   # VST3 bundle
   install -dm755 "$pkgdir/usr/lib/vst3"
-  cp -r target/bundled/slammer.vst3 "$pkgdir/usr/lib/vst3/"
+  cp -r target/bundled/niner.vst3 "$pkgdir/usr/lib/vst3/"
 
   # CLAP plugin
-  install -Dm644 target/bundled/slammer.clap "$pkgdir/usr/lib/clap/slammer.clap"
+  install -Dm644 target/bundled/niner.clap "$pkgdir/usr/lib/clap/niner.clap"
 
   # Standalone binary
-  install -Dm755 target/release/slammer-standalone "$pkgdir/usr/bin/slammer-standalone"
+  install -Dm755 target/release/niner-standalone "$pkgdir/usr/bin/niner-standalone"
 
   # License + readme
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"

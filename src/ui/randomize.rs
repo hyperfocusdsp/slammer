@@ -1,7 +1,7 @@
 use nih_plug::prelude::*;
 use rand::Rng;
 
-use crate::params::SlammerParams;
+use crate::params::NinerParams;
 
 pub const LOCK_SUB: u8 = 1 << 0;
 pub const LOCK_MID: u8 = 1 << 1;
@@ -10,7 +10,7 @@ pub const LOCK_SAT: u8 = 1 << 3;
 pub const LOCK_EQ: u8 = 1 << 4;
 pub const LOCK_COMP: u8 = 1 << 5;
 
-pub fn randomize(setter: &ParamSetter, params: &SlammerParams, locked: u8) {
+pub fn randomize(setter: &ParamSetter, params: &NinerParams, locked: u8) {
     let mut rng = rand::thread_rng();
 
     macro_rules! rand_float {

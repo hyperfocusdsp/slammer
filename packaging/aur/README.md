@@ -1,4 +1,4 @@
-# Slammer AUR package
+# Niner AUR package
 
 The `PKGBUILD` in this directory is the source-of-truth for the Arch
 User Repository entry. It is **not** auto-published — pushing to AUR is
@@ -12,12 +12,12 @@ before it goes live.
 2. Clone the empty AUR namespace (this also reserves the name on first
    push):
    ```bash
-   git clone ssh://aur@aur.archlinux.org/slammer.git ~/aur-slammer
+   git clone ssh://aur@aur.archlinux.org/niner.git ~/aur-niner
    ```
 3. Copy the `PKGBUILD` and generate `.SRCINFO`:
    ```bash
-   cp packaging/aur/PKGBUILD ~/aur-slammer/
-   cd ~/aur-slammer
+   cp packaging/aur/PKGBUILD ~/aur-niner/
+   cd ~/aur-niner
    makepkg --printsrcinfo > .SRCINFO
    ```
 4. Sanity-build in a clean chroot before publishing:
@@ -27,7 +27,7 @@ before it goes live.
 5. Commit + push:
    ```bash
    git add PKGBUILD .SRCINFO
-   git commit -m "Initial import: slammer 0.3.0-1"
+   git commit -m "Initial import: niner 0.7.0-1"
    git push
    ```
 
@@ -36,7 +36,7 @@ before it goes live.
 1. Update `pkgver` in `packaging/aur/PKGBUILD` (in this repo).
 2. Refresh the source hash:
    ```bash
-   curl -sL https://github.com/hyperfocusdsp/slammer/archive/refs/tags/v<NEW>.tar.gz \
+   curl -sL https://github.com/hyperfocusdsp/niner/archive/refs/tags/v<NEW>.tar.gz \
      | sha256sum
    ```
    Replace the value in `sha256sums=(...)`.

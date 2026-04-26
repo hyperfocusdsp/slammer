@@ -2096,6 +2096,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "niner"
+version = "0.7.0"
+dependencies = [
+ "cpal",
+ "directories",
+ "hound",
+ "image",
+ "nih_plug",
+ "nih_plug_egui",
+ "parking_lot",
+ "rand",
+ "realfft",
+ "rfd",
+ "rtrb 0.3.3",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+ "winapi",
+]
+
+[[package]]
 name = "nix"
 version = "0.22.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3158,28 +3180,6 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
-
-[[package]]
-name = "slammer"
-version = "0.6.0"
-dependencies = [
- "cpal",
- "directories",
- "hound",
- "image",
- "nih_plug",
- "nih_plug_egui",
- "parking_lot",
- "rand",
- "realfft",
- "rfd",
- "rtrb 0.3.3",
- "serde",
- "serde_json",
- "tracing",
- "tracing-subscriber",
- "winapi",
-]
 
 [[package]]
 name = "slotmap"

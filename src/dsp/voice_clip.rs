@@ -35,7 +35,7 @@ pub const VC_CUBIC: u8 = 3;
 /// `drive` is in [0.0, 1.0]; values outside the range are clamped to keep
 /// the shaper bounded under automation overshoot. At `drive = 0.0` the
 /// function is the identity for every mode (no harmonic addition, no
-/// behaviour change vs. earlier Slammer versions).
+/// behaviour change vs. earlier versions).
 #[inline]
 pub fn apply(mode: u8, drive: f32, x: f32) -> f32 {
     if drive <= 0.0 || mode == VC_OFF {

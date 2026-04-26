@@ -2,7 +2,7 @@
 //! SUB / TOP / MID / SAT / EQ / MASTER knob rows.
 //!
 //! These functions are pure layout helpers — each one takes the `ui`, the
-//! parameter setter, the shared `SlammerParams`, and whatever rect metadata
+//! parameter setter, the shared `NinerParams`, and whatever rect metadata
 //! it needs, and paints directly. No mutable state is kept between calls.
 
 use nih_plug::prelude::*;
@@ -10,7 +10,7 @@ use nih_plug::util;
 use nih_plug_egui::egui;
 
 use crate::dsp::spectrum::{BINS as SPECTRUM_BINS, DB_CEIL, DB_FLOOR};
-use crate::params::SlammerParams;
+use crate::params::NinerParams;
 use crate::ui::knob;
 use crate::ui::theme;
 use crate::ui::widgets::{
@@ -222,7 +222,7 @@ impl<'a> MasterRow<'a> {
         &self,
         ui: &mut egui::Ui,
         setter: &ParamSetter,
-        params: &SlammerParams,
+        params: &NinerParams,
         panel_rect: egui::Rect,
     ) {
         // The full OUTPUT display rect — also the hit target for the
@@ -605,7 +605,7 @@ impl<'a> MasterRow<'a> {
 pub fn draw_sub_top_row(
     ui: &mut egui::Ui,
     setter: &ParamSetter,
-    params: &SlammerParams,
+    params: &NinerParams,
     panel_rect: egui::Rect,
     master_bottom_y: f32,
 ) -> f32 {
@@ -890,7 +890,7 @@ pub fn draw_sub_top_row(
 pub fn draw_mid_row(
     ui: &mut egui::Ui,
     setter: &ParamSetter,
-    params: &SlammerParams,
+    params: &NinerParams,
     panel_rect: egui::Rect,
     sub_top_bottom_y: f32,
 ) -> f32 {
@@ -1171,7 +1171,7 @@ pub struct SatEqRowResult {
 pub fn draw_sat_eq_row(
     ui: &mut egui::Ui,
     setter: &ParamSetter,
-    params: &SlammerParams,
+    params: &NinerParams,
     panel_rect: egui::Rect,
     mid_bottom_y: f32,
 ) -> SatEqRowResult {
@@ -1480,7 +1480,7 @@ pub fn draw_bounce_button(ui: &mut egui::Ui, panel_rect: egui::Rect, top_y: f32)
 pub fn draw_filter_cluster(
     ui: &mut egui::Ui,
     setter: &ParamSetter,
-    params: &SlammerParams,
+    params: &NinerParams,
     panel_rect: egui::Rect,
     top_y: f32,
 ) {
@@ -1901,7 +1901,7 @@ fn draw_tempo_widget(
 pub fn draw_sequencer_row(
     ui: &mut egui::Ui,
     _setter: &ParamSetter,
-    _params: &SlammerParams,
+    _params: &NinerParams,
     panel_rect: egui::Rect,
     sat_eq_bottom_y: f32,
     seq: &crate::sequencer::Sequencer,

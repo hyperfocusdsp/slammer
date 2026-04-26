@@ -1,4 +1,8 @@
-# Slammer
+# Niner
+
+> **Formerly known as Slammer.** Renamed in v0.7.0 due to a trademark
+> conflict with another product. CLAP/VST3 plugin IDs changed — existing
+> DAW projects saved with the old "Slammer" plugin must be re-wired.
 
 A three-layer synthesized kick drum plugin with a parallel 909-style
 clap voice. SUB sine, MID sine+noise, and a band-passed click TOP mix
@@ -8,7 +12,7 @@ full master bus (RMS compressor → transformer drive → brickwall limiter
 + user preset browser, one-shot WAV/AIFF bounce, and a fully
 interactive standalone editor.
 
-![Slammer](docs/slammer.webp)
+![Niner](docs/niner.webp)
 
 **Formats:** VST3, CLAP, Standalone
 **Platforms:** Linux, macOS (Apple Silicon + Intel), Windows
@@ -16,7 +20,7 @@ interactive standalone editor.
 
 ## Listen
 
-▶ **[Play sound samples in your browser](https://hyperfocusdsp.github.io/slammer/)**
+▶ **[Play sound samples in your browser](https://hyperfocusdsp.github.io/niner/)**
 
 Ten one-shots bounced straight out of the plugin via the BOUNCE button —
 clean kicks, 808/909 emulations, claps, snares, toms, and hats. No
@@ -25,7 +29,7 @@ download, just hit play.
 ## Quick start
 
 Download the latest build for your platform from the
-[Releases](https://github.com/hyperfocusdsp/slammer/releases/latest) page,
+[Releases](https://github.com/hyperfocusdsp/niner/releases/latest) page,
 extract, and run the installer:
 
 ```bash
@@ -36,16 +40,16 @@ extract, and run the installer:
 install.bat
 ```
 
-Rescan plugins in your DAW. Slammer appears as **Hyperfocus DSP / Slammer**.
+Rescan plugins in your DAW. Niner appears as **Hyperfocus DSP / Niner**.
 
 ## Download
 
 | Platform                  | File                               |
 |---------------------------|------------------------------------|
-| Linux x86_64              | `slammer-linux-x86_64.tar.gz`      |
-| macOS ARM (Apple Silicon) | `slammer-macos-arm64.tar.gz`       |
-| macOS Intel               | `slammer-macos-x86_64.tar.gz`      |
-| Windows x86_64            | `slammer-windows-x86_64.zip`       |
+| Linux x86_64              | `niner-linux-x86_64.tar.gz`        |
+| macOS ARM (Apple Silicon) | `niner-macos-arm64.tar.gz`         |
+| macOS Intel               | `niner-macos-x86_64.tar.gz`        |
+| Windows x86_64            | `niner-windows-x86_64.zip`         |
 
 Each archive contains the standalone binary, VST3 and CLAP plugin
 bundles, and an install script.
@@ -53,7 +57,7 @@ bundles, and an install script.
 ### Verify your download
 
 Every release ships a `SHA256SUMS.txt` file on the
-[Releases](https://github.com/hyperfocusdsp/slammer/releases/latest) page.
+[Releases](https://github.com/hyperfocusdsp/niner/releases/latest) page.
 Download it alongside the archive and verify before running:
 
 ```bash
@@ -69,7 +73,7 @@ Get-Content SHA256SUMS.txt | ForEach-Object {
 ```
 
 You can also upload the archive to [VirusTotal](https://www.virustotal.com/gui/home/upload)
-for a third-party scan before running — slammer is unsigned open-source
+for a third-party scan before running — niner is unsigned open-source
 software, so extra caution is welcome.
 
 ## macOS setup — step by step
@@ -85,8 +89,8 @@ Terminal:
 
 ```bash
 cd ~/Downloads
-tar xzf slammer-macos-arm64.tar.gz
-cd slammer-macos-arm64
+tar xzf niner-macos-arm64.tar.gz
+cd niner-macos-arm64
 ```
 
 ### 2. Remove the quarantine flag
@@ -108,12 +112,12 @@ Use the included launch script — it configures the audio buffer size so
 CoreAudio plays nicely with nih-plug's backend:
 
 ```bash
-./slammer-macos.sh
+./niner-macos.sh
 ```
 
 If macOS still blocks the binary after you've removed the quarantine
 flag, open **System Settings → Privacy & Security**, scroll to the
-bottom, and click **Open Anyway** next to the Slammer warning. You
+bottom, and click **Open Anyway** next to the Niner warning. You
 only need to do this once; future launches will go straight through.
 
 ### 4. Install the plugins for your DAW
@@ -122,13 +126,13 @@ Copy the VST3 and CLAP bundles into the standard macOS plugin
 locations:
 
 ```bash
-cp -r slammer.vst3 ~/Library/Audio/Plug-Ins/VST3/
-cp -r slammer.clap ~/Library/Audio/Plug-Ins/CLAP/
+cp -r niner.vst3 ~/Library/Audio/Plug-Ins/VST3/
+cp -r niner.clap ~/Library/Audio/Plug-Ins/CLAP/
 ```
 
 Then rescan plugins in your DAW.
 
-**Note on the launch script:** `slammer-macos.sh` starts the standalone
+**Note on the launch script:** `niner-macos.sh` starts the standalone
 with `--period-size 4096` to work around a CoreAudio variable-buffer
 issue in nih-plug's CPAL backend
 ([upstream bug](https://github.com/robbert-vdh/nih-plug/issues/266)).
@@ -137,7 +141,7 @@ inside a DAW are unaffected.
 
 **Audio Unit (AU) is not supported.** Most macOS DAWs (Ableton Live,
 Bitwig, REAPER, Renoise, FL Studio) support VST3 or CLAP. Logic Pro is
-AU-only and will not see Slammer.
+AU-only and will not see Niner.
 
 ## Features
 
@@ -241,11 +245,15 @@ SUB + MID + TOP voices  (+ parallel CLAP voice)
 
 Resolved via the `directories` crate — correct on every platform:
 
-| Platform | Presets                                         | Logs                                       |
-|----------|-------------------------------------------------|--------------------------------------------|
-| Linux    | `~/.local/share/slammer/presets/`               | `~/.local/share/slammer/slammer.log`       |
-| macOS    | `~/Library/Application Support/Slammer/presets/`| `~/Library/Application Support/Slammer/slammer.log` |
-| Windows  | `%APPDATA%\Slammer\slammer\data\presets\`       | `%APPDATA%\Slammer\slammer\data\slammer.log` |
+| Platform | Presets                                       | Logs                                        |
+|----------|-----------------------------------------------|---------------------------------------------|
+| Linux    | `~/.local/share/niner/presets/`               | `~/.local/share/niner/niner.log`            |
+| macOS    | `~/Library/Application Support/Niner/presets/`| `~/Library/Application Support/Niner/niner.log` |
+| Windows  | `%APPDATA%\Niner\niner\data\presets\`         | `%APPDATA%\Niner\niner\data\niner.log`      |
+
+On first launch after upgrading from Slammer, Niner auto-migrates the
+old `slammer` data directory to the new `niner` location so existing
+presets, hidden-preset filters, and UI scale settings carry over.
 
 ## Building from source
 
@@ -284,14 +292,14 @@ sudo pacman -S --needed base-devel pkg-config cmake \
 ### Build
 
 ```bash
-git clone https://github.com/hyperfocusdsp/slammer.git
-cd slammer
+git clone https://github.com/hyperfocusdsp/niner.git
+cd niner
 
 # Standalone only (quick dev loop)
-cargo run --release --bin slammer-standalone
+cargo run --release --bin niner-standalone
 
-# Full plugin bundles → target/bundled/slammer.{vst3,clap}
-cargo xtask bundle slammer --release
+# Full plugin bundles → target/bundled/niner.{vst3,clap}
+cargo xtask bundle niner --release
 ```
 
 The project is pinned to a specific `nih-plug` commit for reproducible
@@ -312,7 +320,7 @@ src/
 ├── lib.rs              crate root + nih_plug exports
 ├── main.rs             thin standalone wrapper
 ├── plugin.rs           Plugin impl: process(), editor(), MIDI
-├── params.rs           SlammerParams + ParamSnapshot (preset round-trip)
+├── params.rs           NinerParams + ParamSnapshot (preset round-trip)
 ├── presets.rs          factory presets + user preset I/O
 ├── sequencer.rs        16-step atomic sequencer (audio↔GUI via atomics)
 ├── logging.rs          tracing subscriber + log rotation
@@ -357,7 +365,7 @@ src/
   free-form resizable (egui-baseview limitation). Host window size
   snaps to the nearest integer multiple of the 680×444 base layout.
 - **Standalone on macOS Apple Silicon** — requires the included
-  `slammer-macos.sh` launch script to set `--period-size 4096`. VST3
+  `niner-macos.sh` launch script to set `--period-size 4096`. VST3
   and CLAP inside a DAW are unaffected.
 - **Standalone on Windows** — the binary probes the default WASAPI
   output device at launch and uses its mix-format sample rate plus a

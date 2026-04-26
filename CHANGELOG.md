@@ -1,6 +1,38 @@
 # Changelog
 
-All notable changes to Slammer are documented here.
+All notable changes to Niner (formerly Slammer) are documented here.
+
+## [0.7.0] — 2026-04-26
+
+### Renamed: Slammer → Niner
+
+This release rebrands the plugin from **Slammer** to **Niner** (a nod
+to the TR-909 lineage). The rename was driven by a trademark conflict
+with another product called Slammer.
+
+**What you need to know:**
+
+- **Plugin IDs changed.** New `CLAP_ID = "com.hyperfocusdsp.niner"` and
+  new `VST3_CLASS_ID`. Existing DAW projects saved with the old Slammer
+  plugin will show the track as missing/disabled and need to be re-wired
+  to Niner manually. Project parameter values themselves are unaffected
+  — only the host-side identity changed.
+- **Data directory auto-migrates** on first launch. The old
+  `~/.local/share/slammer` (or platform equivalent) is renamed to
+  `~/.local/share/niner`, so user presets, hidden-preset filters, and
+  UI scale settings carry over without intervention.
+- **Log filename:** `slammer.log` → `niner.log`. Old log files inside
+  the migrated directory remain on disk as harmless artifacts.
+- **Bundle / binary names:** `slammer.vst3` → `niner.vst3`,
+  `slammer.clap` → `niner.clap`, `slammer-standalone` → `niner-standalone`.
+- **Env var:** `SLAMMER_DISABLE_SPECTRUM` → `NINER_DISABLE_SPECTRUM`.
+- **Default bounce folder name:** `Slammer Bounces` → `Niner Bounces`
+  (in the user's Music folder).
+- **AUR package:** `slammer` → `niner`. The old `slammer` AUR entry
+  will not auto-update; users on Arch should `yay -R slammer && yay -S niner`.
+- **GitHub repo:** `hyperfocusdsp/slammer` → `hyperfocusdsp/niner`.
+
+DSP, parameters, presets, and UI behavior are unchanged from v0.6.0.
 
 ## [0.6.0] — 2026-04-26
 

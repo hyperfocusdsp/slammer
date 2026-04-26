@@ -16,7 +16,7 @@
 //!
 //! The foreground-thread gate is important: `GetAsyncKeyState` reports
 //! global keyboard state. Without the gate, a T press in another app
-//! (browser, chat) would trigger a kick while Slammer is in the
+//! (browser, chat) would trigger a kick while Niner is in the
 //! background.
 
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -47,7 +47,7 @@ struct KickVoice {
     mid_amp_env: AmpEnvelope,
     /// Independent amp envelope for the MID noise channel. Real 909 kicks
     /// have a short noise BURST gated to attack (~15-30 ms), distinct from
-    /// the tone's longer tail. Legacy slammer ran noise off `mid_amp_env`,
+    /// the tone's longer tail. Legacy versions ran noise off `mid_amp_env`,
     /// which made noise sustain for as long as the tone — too "hissy" on
     /// long-decay presets. With its own envelope, noise can stay short
     /// while the tone keeps its tail.
