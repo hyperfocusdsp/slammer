@@ -262,7 +262,7 @@ impl Plugin for Niner {
                             .current_step
                             .store(new_step, Ordering::Relaxed);
                         if self.sequencer.steps[new_step].load(Ordering::Relaxed) {
-                            let mut p = collect_kick_params(&self.params);
+                            let mut p = kick_params;
                             p.accent = self.sequencer.is_step_accented(new_step);
                             self.engine.trigger(&p);
                         }
@@ -293,7 +293,7 @@ impl Plugin for Niner {
                 self.seq_current_step = 0;
                 self.sequencer.current_step.store(0, Ordering::Relaxed);
                 if self.sequencer.steps[0].load(Ordering::Relaxed) {
-                    let mut p = collect_kick_params(&self.params);
+                    let mut p = kick_params;
                     p.accent = self.sequencer.is_step_accented(0);
                     self.engine.trigger(&p);
                 }
@@ -310,7 +310,7 @@ impl Plugin for Niner {
                         .current_step
                         .store(self.seq_current_step, Ordering::Relaxed);
                     if self.sequencer.steps[self.seq_current_step].load(Ordering::Relaxed) {
-                        let mut p = collect_kick_params(&self.params);
+                        let mut p = kick_params;
                         p.accent = self.sequencer.is_step_accented(self.seq_current_step);
                         self.engine.trigger(&p);
                     }
