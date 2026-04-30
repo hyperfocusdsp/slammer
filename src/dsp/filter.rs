@@ -135,6 +135,16 @@ pub struct MasterEq {
     tilt_high: BiquadFilter,
     low_boost: BiquadFilter,
     notch: BiquadFilter,
+    /// Last-applied params snapshot. `update` early-exits when nothing
+    /// changed, skipping 4 biquad-coefficient recomputes (each ~6 trig
+    /// ops). Initialized to NaN-poisoned values so the first call always
+    /// recomputes.
+    last_sample_rate: f32,
+    last_tilt_db: f32,
+    last_low_boost_db: f32,
+    last_notch_freq: f32,
+    last_notch_q: f32,
+    last_notch_depth_db: f32,
 }
 
 impl MasterEq {
@@ -144,6 +154,12 @@ impl MasterEq {
             tilt_high: BiquadFilter::new(),
             low_boost: BiquadFilter::new(),
             notch: BiquadFilter::new(),
+            last_sample_rate: f32::NAN,
+            last_tilt_db: f32::NAN,
+            last_low_boost_db: f32::NAN,
+            last_notch_freq: f32::NAN,
+            last_notch_q: f32::NAN,
+            last_notch_depth_db: f32::NAN,
         }
     }
 
@@ -156,7 +172,19 @@ impl MasterEq {
     }
 
     /// Update EQ coefficients. Call once per buffer (not per-sample).
+    /// Skips the 4 biquad recomputes when no input has changed since the
+    /// previous call — common case when the user isn't automating EQ.
     pub fn update(&mut self, sample_rate: f32, params: &EqParams) {
+        let unchanged = sample_rate == self.last_sample_rate
+            && params.tilt_db == self.last_tilt_db
+            && params.low_boost_db == self.last_low_boost_db
+            && params.notch_freq == self.last_notch_freq
+            && params.notch_q == self.last_notch_q
+            && params.notch_depth_db == self.last_notch_depth_db;
+        if unchanged {
+            return;
+        }
+
         // Tilt: pivot at 1kHz — low shelf up = high shelf down, and vice versa
         self.tilt_low
             .set_low_shelf(sample_rate, 1000.0, params.tilt_db);
@@ -178,6 +206,13 @@ impl MasterEq {
         } else {
             self.notch.set_passthrough();
         }
+
+        self.last_sample_rate = sample_rate;
+        self.last_tilt_db = params.tilt_db;
+        self.last_low_boost_db = params.low_boost_db;
+        self.last_notch_freq = params.notch_freq;
+        self.last_notch_q = params.notch_q;
+        self.last_notch_depth_db = params.notch_depth_db;
     }
 
     pub fn process(&mut self, input: f32) -> f32 {
@@ -234,6 +269,46 @@ mod tests {
             (out - 0.5).abs() < 0.05,
             "flat EQ should be near unity, got {}",
             out
+        );
+    }
+
+    /// Repeated `update` calls with identical inputs must NOT reset the
+    /// biquad state — that would discard the IIR memory and click. The
+    /// dirty-check should early-exit and leave state alone.
+    #[test]
+    fn eq_update_idempotent_no_state_reset() {
+        let mut eq_a = MasterEq::new();
+        let mut eq_b = MasterEq::new();
+        let params = EqParams {
+            tilt_db: 1.5,
+            low_boost_db: 2.0,
+            notch_freq: 250.0,
+            notch_q: 1.0,
+            notch_depth_db: 6.0,
+        };
+
+        // Warm both with some history.
+        eq_a.update(48000.0, &params);
+        eq_b.update(48000.0, &params);
+        for _ in 0..512 {
+            let _ = eq_a.process(0.3);
+            let _ = eq_b.process(0.3);
+        }
+
+        // A: keep updating with identical params (dirty-check should skip).
+        // B: leave alone.
+        for _ in 0..1000 {
+            eq_a.update(48000.0, &params);
+        }
+
+        // Both must produce the same next sample; if `update` reset state
+        // each call, A's IIR memory would be cleared and the outputs
+        // would diverge.
+        let a_next = eq_a.process(0.4);
+        let b_next = eq_b.process(0.4);
+        assert!(
+            (a_next - b_next).abs() < 1e-6,
+            "idempotent update reset biquad state: a={a_next}, b={b_next}"
         );
     }
 }
