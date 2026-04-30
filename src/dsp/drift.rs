@@ -29,6 +29,12 @@ pub struct Drift {
     state: u32,
 }
 
+impl Default for Drift {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Drift {
     pub fn new() -> Self {
         Self { state: 0xCAFEBABE }

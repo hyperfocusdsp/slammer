@@ -32,6 +32,7 @@ const CUBIC_CLAMP: f32 = 1.6;
 /// crossing visibly.
 const TUBE_BIAS: f32 = 0.10;
 
+#[derive(Default)]
 pub struct TubeWarmth;
 
 impl TubeWarmth {

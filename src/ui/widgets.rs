@@ -62,7 +62,8 @@ pub static SCREWS_BAKED: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 /// blits the baked neutral cap with `core_color` as a tint instead of the
 /// procedural layered-circle core paint. Falls back to procedural when
 /// the bake is missing/decoded fails.
-pub static KNOB_CAP_BAKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static KNOB_CAP_BAKED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Pull the lazy-loaded knob-cap texture out of egui's per-context data.
 /// `None` until the editor decoded the PNG and stashed it.
@@ -81,7 +82,9 @@ pub static DISPLAY_BAKED: std::sync::atomic::AtomicBool = std::sync::atomic::Ato
 /// and stashed the handle (see `editor.rs`). Callers paint via
 /// `paint_display_reflection`.
 pub fn display_reflection_handle(ctx: &egui::Context) -> Option<egui::TextureHandle> {
-    ctx.data(|d| d.get_temp::<egui::TextureHandle>(egui::Id::new("niner_display_reflection_handle")))
+    ctx.data(|d| {
+        d.get_temp::<egui::TextureHandle>(egui::Id::new("niner_display_reflection_handle"))
+    })
 }
 
 /// Paint the baked display-reflection PNG over a `lit` rect. The overlay's
@@ -368,12 +371,7 @@ pub const BTN_PRESS_TRAVEL: f32 = 1.5;
 /// well over ~60 ms instead of jumping. Callers should also offset the
 /// text label by `+ press_amount * BTN_PRESS_TRAVEL` Y so the glyph rides
 /// the cap.
-pub fn draw_button_3d(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    press_amount: f32,
-    rounding: f32,
-) {
+pub fn draw_button_3d(painter: &egui::Painter, rect: egui::Rect, press_amount: f32, rounding: f32) {
     let press = press_amount.clamp(0.0, 1.0);
 
     // 1) Recessed well — chassis cutout the cap sits in. Painted before
@@ -437,9 +435,8 @@ pub fn draw_button_3d(
         theme::BTN_BOTTOM_DEEP,
     ];
     let stop_positions: [f32; 5] = [0.00, 0.25, 0.55, 0.85, 1.00];
-    let blended: [egui::Color32; 5] = std::array::from_fn(|i| {
-        lerp_color32(idle_stops[i], pressed_stops[i], press)
-    });
+    let blended: [egui::Color32; 5] =
+        std::array::from_fn(|i| lerp_color32(idle_stops[i], pressed_stops[i], press));
 
     let layers = 12;
     for i in 0..=layers {

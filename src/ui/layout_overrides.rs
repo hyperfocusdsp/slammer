@@ -11,10 +11,10 @@
 //!
 //! * **`--features layout_editor`** — the full hand-tuning panel compiles
 //!   in. Activation is then gated three more ways:
-//!   1. Env var `NINER_LAYOUT_EDITOR=1` flips `LAYOUT_EDITOR_ON` at startup.
-//!   2. Alt+L toggles it at runtime.
-//!   3. Without either, the atomic stays false and `instrument()` matches
-//!      the default-build behavior — pixel-identical.
+//!   (1) env var `NINER_LAYOUT_EDITOR=1` flips `LAYOUT_EDITOR_ON` at startup,
+//!   (2) Alt+L toggles it at runtime, and
+//!   (3) without either, the atomic stays false and `instrument()` matches
+//!   the default-build behavior — pixel-identical.
 //!   "Save layout" writes to `<niner-data>/layout_overrides.json`, which
 //!   is overlaid on top of the baked JSON at the next startup. Run
 //!   `cargo xtask lock-layout` to bake the saved JSON into the asset.
@@ -162,7 +162,10 @@ struct Selection {
 
 #[cfg(feature = "layout_editor")]
 fn get_selection(ctx: &egui::Context) -> Selection {
-    ctx.data(|d| d.get_temp::<Selection>(egui::Id::new(SELECTION_KEY)).unwrap_or_default())
+    ctx.data(|d| {
+        d.get_temp::<Selection>(egui::Id::new(SELECTION_KEY))
+            .unwrap_or_default()
+    })
 }
 
 #[cfg(feature = "layout_editor")]
@@ -210,10 +213,7 @@ pub fn init(ctx: &egui::Context) {
 }
 
 fn parse_baked() -> LayoutOverrides {
-    match serde_json::from_slice::<LayoutOverrides>(BAKED_LAYOUT_JSON) {
-        Ok(v) => v,
-        Err(_) => LayoutOverrides::default(),
-    }
+    serde_json::from_slice::<LayoutOverrides>(BAKED_LAYOUT_JSON).unwrap_or_default()
 }
 
 /// Pull the current snapshot out of egui's per-context data store.
@@ -426,11 +426,7 @@ fn interact_on_overlay(
         egui::Order::Foreground,
         egui::Id::new("layout_editor_overlay"),
     );
-    let child = ui.new_child(
-        egui::UiBuilder::new()
-            .layer_id(layer)
-            .max_rect(rect),
-    );
+    let child = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(rect));
     child.interact(rect, egui::Id::new(id_salt), sense)
 }
 
@@ -456,8 +452,8 @@ pub fn instrument_text(
     // Apply the saved offset (snapped) regardless of editor state so the
     // dev-saved layout is what the user sees with the editor off.
     let grid = effective_grid(&ctx);
-    let visual_pos = base_pos
-        + egui::vec2(snap(ov.pos_offset_x, grid), snap(ov.pos_offset_y, grid));
+    let visual_pos =
+        base_pos + egui::vec2(snap(ov.pos_offset_x, grid), snap(ov.pos_offset_y, grid));
 
     if !is_editor_on() {
         return visual_pos;
@@ -478,10 +474,7 @@ pub fn instrument_text(
             egui::Align::Center => -approx_size.y * 0.5,
             egui::Align::Max => -approx_size.y,
         };
-        let visual_rect = egui::Rect::from_min_size(
-            visual_pos + egui::vec2(dx, dy),
-            approx_size,
-        );
+        let visual_rect = egui::Rect::from_min_size(visual_pos + egui::vec2(dx, dy), approx_size);
 
         registry_record(&ctx, key, visual_rect);
 
@@ -609,7 +602,10 @@ fn apply_right_click_reset(ctx: &egui::Context, key: &str, resp: &egui::Response
     }
     if any {
         write_snapshot(ctx, snap_state);
-        nih_plug::nih_log!("[layout_editor] reset offset for {} element(s)", targets.len());
+        nih_plug::nih_log!(
+            "[layout_editor] reset offset for {} element(s)",
+            targets.len()
+        );
     }
 }
 
@@ -627,12 +623,7 @@ pub fn override_for(ctx: &egui::Context, key: &str) -> OverrideEntry {
 /// elements arrow-key nudge will move. Active-drag uses a brighter
 /// outline so they're distinguishable mid-gesture.
 #[cfg(feature = "layout_editor")]
-fn paint_drag_overlay(
-    ctx: &egui::Context,
-    rect: egui::Rect,
-    active: bool,
-    selected: bool,
-) {
+fn paint_drag_overlay(ctx: &egui::Context, rect: egui::Rect, active: bool, selected: bool) {
     // Paint into the overlay layer so the highlights sit on top of the
     // central panel content (and on top of the chassis bake's
     // anti-aliasing) rather than getting hidden behind it.
@@ -672,8 +663,7 @@ fn paint_drag_overlay(
         (rect.left(), rect.bottom()),
         (rect.right(), rect.bottom()),
     ] {
-        let handle =
-            egui::Rect::from_center_size(egui::pos2(cx, cy), egui::vec2(s, s));
+        let handle = egui::Rect::from_center_size(egui::pos2(cx, cy), egui::vec2(s, s));
         painter.rect_filled(handle, 0.0, handle_color);
     }
 }
@@ -859,10 +849,7 @@ pub fn handle_toggle(ctx: &egui::Context, typing: bool) {
         });
     }
     let toggled = ctx.input(|i| {
-        i.key_pressed(egui::Key::L)
-            && i.modifiers.alt
-            && !i.modifiers.shift
-            && !i.modifiers.ctrl
+        i.key_pressed(egui::Key::L) && i.modifiers.alt && !i.modifiers.shift && !i.modifiers.ctrl
     });
     if toggled {
         let prev = LAYOUT_EDITOR_ON.load(Ordering::Relaxed);
@@ -920,7 +907,9 @@ pub fn render_panel(ctx: &egui::Context) {
             // Selection summary — surfaces what arrow-key nudge will move.
             let sel_now = get_selection(ctx);
             let sel_text = if sel_now.keys.is_empty() {
-                egui::RichText::new("Selection: (none)").small().color(egui::Color32::DARK_GRAY)
+                egui::RichText::new("Selection: (none)")
+                    .small()
+                    .color(egui::Color32::DARK_GRAY)
             } else if sel_now.keys.len() == 1 {
                 egui::RichText::new(format!("Selection: {}", sel_now.keys[0]))
                     .small()
@@ -1024,13 +1013,9 @@ pub fn render_panel(ctx: &egui::Context) {
                             let mut sorted = registered.clone();
                             sorted.sort();
                             for key in &sorted {
-                                let entry = snap_state
-                                    .entries
-                                    .get(key)
-                                    .copied()
-                                    .unwrap_or_default();
-                                let active = entry.pos_offset_x != 0.0
-                                    || entry.pos_offset_y != 0.0;
+                                let entry =
+                                    snap_state.entries.get(key).copied().unwrap_or_default();
+                                let active = entry.pos_offset_x != 0.0 || entry.pos_offset_y != 0.0;
                                 let label = if active {
                                     format!(
                                         "{} ({:+.0}, {:+.0})",
@@ -1042,12 +1027,9 @@ pub fn render_panel(ctx: &egui::Context) {
                                 ui.horizontal(|ui| {
                                     let txt = if active {
                                         egui::RichText::new(label)
-                                            .color(egui::Color32::from_rgb(
-                                                0xff, 0xc0, 0x40,
-                                            ))
+                                            .color(egui::Color32::from_rgb(0xff, 0xc0, 0x40))
                                     } else {
-                                        egui::RichText::new(label)
-                                            .color(egui::Color32::DARK_GRAY)
+                                        egui::RichText::new(label).color(egui::Color32::DARK_GRAY)
                                     };
                                     ui.label(txt);
                                     if ui.small_button("⟲").clicked() {
@@ -1063,10 +1045,9 @@ pub fn render_panel(ctx: &egui::Context) {
             ui.horizontal(|ui| {
                 if ui.button("Save layout").clicked() {
                     match save_to_disk(&snap_state) {
-                        Ok(()) => nih_plug::nih_log!(
-                            "[layout_editor] saved → {}",
-                            store_path().display()
-                        ),
+                        Ok(()) => {
+                            nih_plug::nih_log!("[layout_editor] saved → {}", store_path().display())
+                        }
                         Err(e) => nih_plug::nih_log!(
                             "[layout_editor] save failed ({}): {}",
                             store_path().display(),
@@ -1083,22 +1064,19 @@ pub fn render_panel(ctx: &egui::Context) {
             // Hover hint: highlight the currently-hovered registered
             // element by reading its rect from the registry and
             // outlining it. Done via a label that lists the hover.
-            if let Some(hovered) = ctx
-                .pointer_hover_pos()
-                .and_then(|p| {
-                    let mut found: Option<(String, egui::Rect)> = None;
-                    let keys = registry_keys(ctx);
-                    for k in keys {
-                        if let Some(r) = registry_rect(ctx, &k) {
-                            if r.contains(p) {
-                                found = Some((k, r));
-                                break;
-                            }
+            if let Some(hovered) = ctx.pointer_hover_pos().and_then(|p| {
+                let mut found: Option<(String, egui::Rect)> = None;
+                let keys = registry_keys(ctx);
+                for k in keys {
+                    if let Some(r) = registry_rect(ctx, &k) {
+                        if r.contains(p) {
+                            found = Some((k, r));
+                            break;
                         }
                     }
-                    found
-                })
-            {
+                }
+                found
+            }) {
                 ui.label(
                     egui::RichText::new(format!("hover: {}", hovered.0))
                         .small()

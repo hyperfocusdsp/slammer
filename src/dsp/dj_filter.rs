@@ -34,6 +34,12 @@ pub struct DjFilter {
     is_hp: bool,
 }
 
+impl Default for DjFilter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DjFilter {
     pub fn new() -> Self {
         Self {

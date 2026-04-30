@@ -85,10 +85,10 @@ fn diode_clip(x: f32, drive: f32) -> f32 {
 
 /// Cubic soft-clip: `x - x³/3` with input pre-gain, hard-clipped beyond
 /// the inflection where the cubic starts to fold. Cheap (one multiply
-/// + one cube + one subtract) and a good harmonic reference vs. tanh —
-/// 3rd harmonic only, no even content. The clamp gates the input to the
-/// region where the cubic is monotonic (`|xg| ≤ 1`); past that the curve
-/// would fold back and produce aliased garbage.
+/// plus one cube and one subtract) and a good harmonic reference vs.
+/// `tanh` — 3rd harmonic only, no even content. The clamp gates the
+/// input to the region where the cubic is monotonic (`|xg| ≤ 1`); past
+/// that the curve would fold back and produce aliased garbage.
 #[inline]
 fn cubic_clip(x: f32, drive: f32) -> f32 {
     let g = 1.0 + drive * 3.0;

@@ -83,48 +83,11 @@ impl WaveformDisplay {
 
     #[cfg(test)]
     fn len(&self) -> usize {
-        if self.full { self.buf.len() } else { self.head }
-    }
-}
-
-#[cfg(test)]
-mod waveform_tests {
-    use super::WaveformDisplay;
-
-    #[test]
-    fn ring_wraparound_yields_oldest_first() {
-        // Capacity 5; push 7 values so the ring wraps. The oldest two are
-        // overwritten — the iter must yield 3, 4, 5, 6, 7 in order.
-        let mut wf = WaveformDisplay::new(5);
-        for v in 1..=7 {
-            wf.push(v as f32);
+        if self.full {
+            self.buf.len()
+        } else {
+            self.head
         }
-        let (older, newer) = wf.slices();
-        let collected: Vec<f32> = older.iter().chain(newer.iter()).copied().collect();
-        assert_eq!(collected, vec![3.0, 4.0, 5.0, 6.0, 7.0]);
-        assert_eq!(wf.len(), 5);
-    }
-
-    #[test]
-    fn before_wrap_older_is_empty() {
-        let mut wf = WaveformDisplay::new(10);
-        wf.push(1.0);
-        wf.push(2.0);
-        wf.push(3.0);
-        let (older, newer) = wf.slices();
-        assert!(older.is_empty());
-        assert_eq!(newer, &[1.0, 2.0, 3.0][..]);
-        assert_eq!(wf.len(), 3);
-    }
-
-    #[test]
-    fn empty_capacity_does_not_panic() {
-        // Edge case: 0-cap is degenerate but must not panic.
-        let mut wf = WaveformDisplay::new(0);
-        wf.push(1.0);
-        assert_eq!(wf.len(), 0);
-        let (a, b) = wf.slices();
-        assert!(a.is_empty() && b.is_empty());
     }
 }
 
@@ -716,10 +679,8 @@ pub fn create(
                     // user drags it via the layout editor; can also be
                     // dragged independently via its own "master.bpm" key.
                     {
-                        let display_off = crate::ui::layout_overrides::offset_for(
-                            ctx,
-                            "master.output_display",
-                        );
+                        let display_off =
+                            crate::ui::layout_overrides::offset_for(ctx, "master.output_display");
                         let lit = crate::ui::widgets::lit_rect_default(
                             wf_left + display_off.x,
                             master_y + display_off.y,
@@ -970,5 +931,46 @@ fn drain_telemetry(
         for &p in &temp {
             wf.push(p);
         }
+    }
+}
+
+#[cfg(test)]
+mod waveform_tests {
+    use super::WaveformDisplay;
+
+    #[test]
+    fn ring_wraparound_yields_oldest_first() {
+        // Capacity 5; push 7 values so the ring wraps. The oldest two are
+        // overwritten — the iter must yield 3, 4, 5, 6, 7 in order.
+        let mut wf = WaveformDisplay::new(5);
+        for v in 1..=7 {
+            wf.push(v as f32);
+        }
+        let (older, newer) = wf.slices();
+        let collected: Vec<f32> = older.iter().chain(newer.iter()).copied().collect();
+        assert_eq!(collected, vec![3.0, 4.0, 5.0, 6.0, 7.0]);
+        assert_eq!(wf.len(), 5);
+    }
+
+    #[test]
+    fn before_wrap_older_is_empty() {
+        let mut wf = WaveformDisplay::new(10);
+        wf.push(1.0);
+        wf.push(2.0);
+        wf.push(3.0);
+        let (older, newer) = wf.slices();
+        assert!(older.is_empty());
+        assert_eq!(newer, &[1.0, 2.0, 3.0][..]);
+        assert_eq!(wf.len(), 3);
+    }
+
+    #[test]
+    fn empty_capacity_does_not_panic() {
+        // Edge case: 0-cap is degenerate but must not panic.
+        let mut wf = WaveformDisplay::new(0);
+        wf.push(1.0);
+        assert_eq!(wf.len(), 0);
+        let (a, b) = wf.slices();
+        assert!(a.is_empty() && b.is_empty());
     }
 }

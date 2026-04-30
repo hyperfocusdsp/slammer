@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+    tags-ignore:
+      - "v*"
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# This workflow takes no untrusted user input — only `matrix.os` (hardcoded
+# matrix values) is interpolated, no github.event.* references — so the
+# usual workflow-injection footguns (PR titles, commit messages, etc.)
+# don't apply here. If a future step adds inputs from issues/PRs, route
+# them through `env:` not direct `${{ }}` interpolation.
+
+jobs:
+  gate:
+    name: Gate (fmt + clippy + tests + symbol exclusion)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config cmake \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-icccm4-dev libxcb-keysyms1-dev \
+            libxcursor-dev libxkbcommon-dev libgl-dev libasound2-dev libjack-dev
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      # Clippy runs without `-D warnings` for now: the codebase has a
+      # backlog of pedantic lints (field_reassign_with_default, doc_lazy_continuation,
+      # etc.) accumulated pre-refactor that would block CI. The gate
+      # below catches actual errors. A follow-up pass can lock `-D warnings`
+      # once the existing warnings are cleared.
+      - name: cargo clippy (default features)
+        run: cargo clippy --all-targets --no-default-features
+
+      - name: cargo clippy (--features layout_editor)
+        run: cargo clippy --all-targets --features layout_editor
+
+      - name: cargo test (default features, release)
+        run: cargo test --release --no-default-features
+
+      - name: cargo test (--features layout_editor, release)
+        run: cargo test --release --features layout_editor
+
+      - name: Verify layout-editor symbol exclusion
+        run: bash scripts/check_layout_editor_excluded.sh
+
+      - name: Standalone smoke test
+        run: bash scripts/smoke_standalone.sh
+
+  build:
+    name: Build (${{ matrix.os }})
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+          - os: macos-14
+          - os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config cmake \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-icccm4-dev libxcb-keysyms1-dev \
+            libxcursor-dev libxkbcommon-dev libgl-dev libasound2-dev libjack-dev
+
+      - name: Bundle plugins
+        run: cargo xtask bundle niner --release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        env:
+          OS_TAG: ${{ matrix.os }}
+        with:
+          name: niner-${{ matrix.os }}-ci
+          path: target/bundled/
+          retention-days: 7

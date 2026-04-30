@@ -227,14 +227,7 @@ impl PresetBar {
                     0.06,
                 );
                 let r = crate::ui::layout_overrides::chrome_rounding(ui.ctx(), 1.5);
-                preset_arrow_btn(
-                    ui.painter(),
-                    left_rect,
-                    "\u{25C2}",
-                    color,
-                    press_amount,
-                    r,
-                );
+                preset_arrow_btn(ui.painter(), left_rect, "\u{25C2}", color, press_amount, r);
             }
             if left_resp.clicked() && !self.cached.is_empty() {
                 let idx = if self.state.selected_index == 0 {
@@ -307,14 +300,7 @@ impl PresetBar {
                     0.06,
                 );
                 let r = crate::ui::layout_overrides::chrome_rounding(ui.ctx(), 1.5);
-                preset_arrow_btn(
-                    ui.painter(),
-                    right_rect,
-                    "\u{25B8}",
-                    color,
-                    press_amount,
-                    r,
-                );
+                preset_arrow_btn(ui.painter(), right_rect, "\u{25B8}", color, press_amount, r);
             }
             if right_resp.clicked() && !self.cached.is_empty() {
                 let idx = if self.state.selected_index >= self.cached.len() - 1 {
@@ -356,11 +342,9 @@ impl PresetBar {
             egui::Sense::click(),
         );
         let save_pressed = save_resp.is_pointer_button_down_on() || is_editing;
-        let save_press_amount = ui.ctx().animate_bool_with_time(
-            egui::Id::new("preset_save_anim"),
-            save_pressed,
-            0.06,
-        );
+        let save_press_amount =
+            ui.ctx()
+                .animate_bool_with_time(egui::Id::new("preset_save_anim"), save_pressed, 0.06);
         let r = crate::ui::layout_overrides::chrome_rounding(ui.ctx(), 2.0);
         draw_3d_button(ui.painter(), save_rect, "SAVE", save_press_amount, r);
         if save_resp.clicked() {
@@ -391,11 +375,9 @@ impl PresetBar {
         let can_delete = !self.cached.is_empty();
         let del_resp = ui.interact(del_rect, egui::Id::new("preset_del"), egui::Sense::click());
         let del_pressed = del_resp.is_pointer_button_down_on() && can_delete;
-        let del_press_amount = ui.ctx().animate_bool_with_time(
-            egui::Id::new("preset_del_anim"),
-            del_pressed,
-            0.06,
-        );
+        let del_press_amount =
+            ui.ctx()
+                .animate_bool_with_time(egui::Id::new("preset_del_anim"), del_pressed, 0.06);
         let r = crate::ui::layout_overrides::chrome_rounding(ui.ctx(), 2.0);
         draw_3d_button(ui.painter(), del_rect, "DEL", del_press_amount, r);
         if del_resp.clicked() && can_delete {

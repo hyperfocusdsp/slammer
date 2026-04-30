@@ -66,7 +66,10 @@ fn restore_from_persist_recovers_pattern_after_late_mirror_update() {
     // Confirm baseline — no steps active.
     for i in 0..STEPS {
         assert!(!seq.is_step_on(i), "baseline: step {i} should be off");
-        assert!(!seq.is_step_accented(i), "baseline: accent {i} should be off");
+        assert!(
+            !seq.is_step_accented(i),
+            "baseline: accent {i} should be off"
+        );
     }
 
     // Host populates the mirror after Sequencer construction (the actual
@@ -120,8 +123,15 @@ fn toggle_step_writes_through_to_persist_mirror() {
     seq.toggle_accent(3);
     assert_eq!(*accent.lock(), 1u16 << 3);
     seq.toggle_step(3); // turn step 3 OFF
-    assert!(!seq.is_step_accented(3), "accent must clear when step turns off");
-    assert_eq!(*accent.lock() & (1u16 << 3), 0, "persist accent bit must clear");
+    assert!(
+        !seq.is_step_accented(3),
+        "accent must clear when step turns off"
+    );
+    assert_eq!(
+        *accent.lock() & (1u16 << 3),
+        0,
+        "persist accent bit must clear"
+    );
 }
 
 #[test]

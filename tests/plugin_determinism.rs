@@ -79,7 +79,10 @@ fn assert_no_nan_inf(name: &str, samples: &[f32]) {
 
 fn assert_audible(name: &str, samples: &[f32]) {
     let peak = samples.iter().fold(0.0_f32, |a, &b| a.max(b.abs()));
-    assert!(peak > 0.05, "{name}: peak {peak} too quiet (expected > 0.05)");
+    assert!(
+        peak > 0.05,
+        "{name}: peak {peak} too quiet (expected > 0.05)"
+    );
 }
 
 /// Locked goldens (Linux x86_64). Captured against WIP snapshot 7199a93
@@ -117,13 +120,15 @@ fn golden_kick_loop_5s() {
 
 #[test]
 fn golden_kick_loop_5s_heavy() {
-    let mut params = KickParams::default();
-    params.sat_mode = 1;
-    params.sat_drive = 0.7;
-    params.sat_mix = 1.0;
-    params.kick_clip_mode = 1;
-    params.kick_clip_drive = 0.4;
-    params.drift_amount = 0.5;
+    let params = KickParams {
+        sat_mode: 1,
+        sat_drive: 0.7,
+        sat_mix: 1.0,
+        kick_clip_mode: 1,
+        kick_clip_drive: 0.4,
+        drift_amount: 0.5,
+        ..KickParams::default()
+    };
     let mono = render_loop(&params, 5.0, samples_per_16th_at_120bpm());
     assert_golden("kick_loop_5s_heavy", &mono);
 }
@@ -156,7 +161,10 @@ fn rt_alloc_stress_max_polyphony() {
         }
         engine.process(&mut left[..n], &mut right[..n], &params);
         for j in 0..n {
-            assert!(left[j].is_finite() && right[j].is_finite(), "non-finite in stress run");
+            assert!(
+                left[j].is_finite() && right[j].is_finite(),
+                "non-finite in stress run"
+            );
         }
         i += n;
     }

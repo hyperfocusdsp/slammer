@@ -71,45 +71,49 @@ fn preset_default() -> KickParams {
 
 /// Heavy preset — saturation engaged, drift on, voice clip on.
 fn preset_heavy() -> KickParams {
-    let mut p = KickParams::default();
-    p.sat_mode = 1; // tube
-    p.sat_drive = 0.7;
-    p.sat_mix = 1.0;
-    p.kick_clip_mode = 1;
-    p.kick_clip_drive = 0.4;
-    p.drift_amount = 0.5;
-    p
+    KickParams {
+        sat_mode: 1, // tube
+        sat_drive: 0.7,
+        sat_mix: 1.0,
+        kick_clip_mode: 1,
+        kick_clip_drive: 0.4,
+        drift_amount: 0.5,
+        ..KickParams::default()
+    }
 }
 
 /// Long-tail sub-heavy preset.
 fn preset_sub_long() -> KickParams {
-    let mut p = KickParams::default();
-    p.decay_ms = 800.0;
-    p.sub_gain = 1.0;
-    p.sub_fstart = 120.0;
-    p.sub_fend = 35.0;
-    p.sub_sweep_ms = 100.0;
-    p.mid_gain = 0.2;
-    p.top_gain = 0.1;
-    p
+    KickParams {
+        decay_ms: 800.0,
+        sub_gain: 1.0,
+        sub_fstart: 120.0,
+        sub_fend: 35.0,
+        sub_sweep_ms: 100.0,
+        mid_gain: 0.2,
+        top_gain: 0.1,
+        ..KickParams::default()
+    }
 }
 
 /// Clap-on preset.
 fn preset_clap() -> KickParams {
-    let mut p = KickParams::default();
-    p.clap_on = true;
-    p.clap_level = 0.9;
-    p.clap_freq = 1200.0;
-    p.clap_tail_ms = 180.0;
-    p
+    KickParams {
+        clap_on: true,
+        clap_level: 0.9,
+        clap_freq: 1200.0,
+        clap_tail_ms: 180.0,
+        ..KickParams::default()
+    }
 }
 
 /// Accented preset — sequencer accent flag flips on.
 fn preset_accented() -> KickParams {
-    let mut p = KickParams::default();
-    p.accent = true;
-    p.accent_amount = 0.6;
-    p
+    KickParams {
+        accent: true,
+        accent_amount: 0.6,
+        ..KickParams::default()
+    }
 }
 
 /// Locked goldens (Linux x86_64). Update only after deliberate output change.
@@ -130,7 +134,10 @@ fn assert_golden(name: &str, mono: &[f32], hash: u64) {
         "{name}: non-finite sample in render"
     );
     let peak = mono.iter().fold(0.0_f32, |a, &b| a.max(b.abs()));
-    assert!(peak > 1e-4, "{name}: render peaked at {peak}, expected > 1e-4");
+    assert!(
+        peak > 1e-4,
+        "{name}: render peaked at {peak}, expected > 1e-4"
+    );
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {

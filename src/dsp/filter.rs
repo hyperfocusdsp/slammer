@@ -23,6 +23,12 @@ pub struct BiquadFilter {
     y2: f32,
 }
 
+impl Default for BiquadFilter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BiquadFilter {
     pub fn new() -> Self {
         Self {
@@ -145,6 +151,12 @@ pub struct MasterEq {
     last_notch_freq: f32,
     last_notch_q: f32,
     last_notch_depth_db: f32,
+}
+
+impl Default for MasterEq {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MasterEq {
@@ -314,7 +326,10 @@ mod tests {
         let high_gain_db = 10.0 * (p_high_out / p_high_in).log10();
 
         // Low frequency should be boosted ~6 dB, highs ~unchanged.
-        assert!(low_gain_db > 4.0, "low_shelf+6dB at 60Hz: got {low_gain_db:.2} dB");
+        assert!(
+            low_gain_db > 4.0,
+            "low_shelf+6dB at 60Hz: got {low_gain_db:.2} dB"
+        );
         assert!(
             high_gain_db.abs() < 1.0,
             "low_shelf+6dB at 4kHz: should be ~0 dB, got {high_gain_db:.2}"
@@ -343,7 +358,10 @@ mod tests {
         let low_gain_db = 10.0 * (p_low_out / p_low_in).log10();
         let high_gain_db = 10.0 * (p_high_out / p_high_in).log10();
 
-        assert!(high_gain_db > 4.0, "high_shelf+6dB at 8kHz: got {high_gain_db:.2}");
+        assert!(
+            high_gain_db > 4.0,
+            "high_shelf+6dB at 8kHz: got {high_gain_db:.2}"
+        );
         assert!(
             low_gain_db.abs() < 1.0,
             "high_shelf+6dB at 100Hz: should be ~0 dB, got {low_gain_db:.2}"
@@ -374,7 +392,10 @@ mod tests {
         let target_db = 10.0 * (p_t_out / p_t_in).log10();
         let other_db = 10.0 * (p_o_out / p_o_in).log10();
 
-        assert!(target_db < -6.0, "notch should cut 250Hz, got {target_db:.2}");
+        assert!(
+            target_db < -6.0,
+            "notch should cut 250Hz, got {target_db:.2}"
+        );
         assert!(
             other_db.abs() < 1.0,
             "notch off-band 1kHz should be ~0 dB, got {other_db:.2}"

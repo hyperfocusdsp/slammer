@@ -47,8 +47,9 @@ fn lock_layout(src: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
 
     let src_path = match src {
         Some(p) => p,
-        None => default_user_layout_path()
-            .ok_or("could not locate <niner-data>/layout_overrides.json — pass a path explicitly")?,
+        None => default_user_layout_path().ok_or(
+            "could not locate <niner-data>/layout_overrides.json — pass a path explicitly",
+        )?,
     };
 
     if !src_path.exists() {
@@ -60,19 +61,15 @@ fn lock_layout(src: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     // Sanity-parse so we never bake malformed JSON. We don't depend on
     // the `niner` crate from xtask (would double the build), so just
     // confirm the top-level is a JSON object with a `bulk` object child.
-    let v: serde_json::Value = serde_json::from_str(&contents)
-        .map_err(|e| format!("source JSON invalid: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&contents).map_err(|e| format!("source JSON invalid: {e}"))?;
     if !v.is_object() || !v.get("bulk").map(|b| b.is_object()).unwrap_or(false) {
         return Err("source JSON missing top-level `bulk` object".into());
     }
 
     std::fs::create_dir_all(dest.parent().unwrap())?;
     std::fs::write(&dest, &contents)?;
-    println!(
-        "locked layout: {} → {}",
-        src_path.display(),
-        dest.display()
-    );
+    println!("locked layout: {} → {}", src_path.display(), dest.display());
     println!("rebuild release to ship the new layout: cargo xtask bundle niner --release");
     Ok(())
 }

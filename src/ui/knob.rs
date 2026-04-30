@@ -215,30 +215,23 @@ fn knob_inner(
             //       killing the pixelation/aliasing that showed when the
             //       bake's alpha falloff competed with the bevel circle.
             let visible_core_r = (core_radius - 1.0).max(core_radius * 0.85);
-            let cap_handle = if crate::ui::widgets::KNOB_CAP_BAKED
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
-                crate::ui::widgets::knob_cap_handle(ui.ctx())
-            } else {
-                None
-            };
+            let cap_handle =
+                if crate::ui::widgets::KNOB_CAP_BAKED.load(std::sync::atomic::Ordering::Relaxed) {
+                    crate::ui::widgets::knob_cap_handle(ui.ctx())
+                } else {
+                    None
+                };
             if let Some(handle) = cap_handle {
                 // The bake's visible disk is `cap.radius_px=110` in a
                 // 256-wide canvas → fills 110/128 = 0.859 of the half.
                 // Scale dest rect so the disk maps to visible_core_r.
                 let cap_scale = 128.0 / 110.0;
                 let cap_w = visible_core_r * 2.0 * cap_scale;
-                let cap_rect = egui::Rect::from_center_size(
-                    center,
-                    egui::vec2(cap_w, cap_w),
-                );
+                let cap_rect = egui::Rect::from_center_size(center, egui::vec2(cap_w, cap_w));
                 painter.image(
                     handle.id(),
                     cap_rect,
-                    egui::Rect::from_min_max(
-                        egui::pos2(0.0, 0.0),
-                        egui::pos2(1.0, 1.0),
-                    ),
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                     core_color,
                 );
             } else {
@@ -251,10 +244,7 @@ fn knob_inner(
             painter.circle_stroke(
                 center,
                 visible_core_r,
-                egui::Stroke::new(
-                    1.0,
-                    egui::Color32::from_rgba_premultiplied(0, 0, 0, 0x40),
-                ),
+                egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(0, 0, 0, 0x40)),
             );
 
             // 6. Indicator stem + tick dots. The stem reads as a small
@@ -333,11 +323,7 @@ fn knob_inner(
                 let tick_angle = start_angle + sweep_range * (i as f32 / 10.0);
                 let tdir = egui::vec2(tick_angle.cos(), tick_angle.sin());
                 let dot_center = center + tdir * dot_center_r;
-                painter.circle_filled(
-                    dot_center,
-                    dot_radius,
-                    theme::KNOB_INDICATOR,
-                );
+                painter.circle_filled(dot_center, dot_radius, theme::KNOB_INDICATOR);
             }
 
             // 8. Write value to display when hovered/dragged

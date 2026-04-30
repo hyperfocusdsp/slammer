@@ -100,9 +100,7 @@ pub fn draw_chrome(
         );
         // Composite real screws over the (possibly clean) plate. Gated on
         // SCREWS_BAKED so the 1×1 placeholder in tree doesn't paint.
-        if crate::ui::widgets::SCREWS_BAKED
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
+        if crate::ui::widgets::SCREWS_BAKED.load(std::sync::atomic::Ordering::Relaxed) {
             if let Some(s) = screws {
                 painter.image(
                     s.id(),
@@ -186,11 +184,9 @@ pub fn test_button(ui: &mut egui::Ui, panel_rect: egui::Rect, header_center_y: f
         egui::Sense::click(),
     );
     let pressed = resp.is_pointer_button_down_on();
-    let press_amount = ui.ctx().animate_bool_with_time(
-        egui::Id::new("test_btn_anim"),
-        pressed,
-        0.06,
-    );
+    let press_amount =
+        ui.ctx()
+            .animate_bool_with_time(egui::Id::new("test_btn_anim"), pressed, 0.06);
     {
         let painter = ui.painter();
         let r = crate::ui::layout_overrides::chrome_rounding(ui.ctx(), 3.0);
@@ -304,12 +300,7 @@ impl<'a> MasterRow<'a> {
             wf_height,
             crate::ui::widgets::DisplayInsets::DEFAULT,
         );
-        let lit = lit_rect_default(
-            wf_left,
-            master_y,
-            wf_width,
-            wf_height,
-        );
+        let lit = lit_rect_default(wf_left, master_y, wf_width, wf_height);
         let mode_label = match self.display_mode {
             DisplayMode::Waveform => "OUTPUT",
             DisplayMode::Spectrum => "SPECTRUM",
@@ -545,12 +536,7 @@ impl<'a> MasterRow<'a> {
             let strip_right = panel_rect.right() - CONTENT_LEFT;
             let strip_w = (strip_right - strip_x).max(0.0);
             if strip_w >= 80.0 {
-                let comp_lit = lit_rect_default(
-                    strip_x + 2.0,
-                    master_y,
-                    strip_w - 4.0,
-                    wf_height,
-                );
+                let comp_lit = lit_rect_default(strip_x + 2.0, master_y, strip_w - 4.0, wf_height);
                 ui.painter().text(
                     egui::pos2(comp_lit.left() + 2.0, comp_lit.top() + 1.0),
                     egui::Align2::LEFT_TOP,
@@ -708,8 +694,7 @@ pub fn draw_sub_top_row(
         egui::pos2(panel_rect.left() + CONTENT_LEFT, row_knob_y),
         egui::vec2(KNOB_SPACING * 5.0, KNOB_SIZE + 30.0),
     );
-    let sub_knob_rect =
-        crate::ui::layout_overrides::instrument(ui, "row.sub.knobs", sub_knob_rect);
+    let sub_knob_rect = crate::ui::layout_overrides::instrument(ui, "row.sub.knobs", sub_knob_rect);
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(sub_knob_rect), |ui| {
         ui.horizontal(|ui| {
             param_knob(
@@ -788,8 +773,7 @@ pub fn draw_sub_top_row(
         ),
         egui::vec2(KNOB_SPACING * 5.0, KNOB_SIZE + 30.0),
     );
-    let top_knob_rect =
-        crate::ui::layout_overrides::instrument(ui, "row.top.knobs", top_knob_rect);
+    let top_knob_rect = crate::ui::layout_overrides::instrument(ui, "row.top.knobs", top_knob_rect);
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(top_knob_rect), |ui| {
         ui.horizontal(|ui| {
             param_knob(
@@ -879,8 +863,7 @@ pub fn draw_sub_top_row(
             egui::pos2(col_x, col_row_y),
             egui::vec2(row_w, small_knob + 22.0),
         );
-        let knob_rect =
-            crate::ui::layout_overrides::instrument(ui, "top.precise_comp", knob_rect);
+        let knob_rect = crate::ui::layout_overrides::instrument(ui, "top.precise_comp", knob_rect);
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(knob_rect), |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             ui.horizontal(|ui| {
@@ -1011,8 +994,7 @@ pub fn draw_mid_row(
         egui::pos2(panel_rect.left() + CONTENT_LEFT, row_knob_y),
         egui::vec2(KNOB_SPACING * 10.0, KNOB_SIZE + 30.0),
     );
-    let mid_knob_rect =
-        crate::ui::layout_overrides::instrument(ui, "row.mid.knobs", mid_knob_rect);
+    let mid_knob_rect = crate::ui::layout_overrides::instrument(ui, "row.mid.knobs", mid_knob_rect);
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(mid_knob_rect), |ui| {
         ui.horizontal(|ui| {
             param_knob(
@@ -1165,8 +1147,7 @@ pub fn draw_mid_row(
             egui::pos2(row_x, row_y),
             egui::vec2(row_w, small_knob + 22.0),
         );
-        let knob_rect =
-            crate::ui::layout_overrides::instrument(ui, "mid.clap_cluster", knob_rect);
+        let knob_rect = crate::ui::layout_overrides::instrument(ui, "mid.clap_cluster", knob_rect);
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(knob_rect), |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             ui.horizontal(|ui| {
@@ -1579,7 +1560,11 @@ pub struct BounceRowResult {
 /// CLEAR sits to the left of BOUNCE; clicking it wipes the sequencer
 /// pattern. Both styled to match [`test_button`] so they read as part of
 /// the same visual family, and both share PLAY's 40 × 22 footprint.
-pub fn draw_bounce_button(ui: &mut egui::Ui, panel_rect: egui::Rect, top_y: f32) -> BounceRowResult {
+pub fn draw_bounce_button(
+    ui: &mut egui::Ui,
+    panel_rect: egui::Rect,
+    top_y: f32,
+) -> BounceRowResult {
     // Match PLAY + step-pad height/width so the seq-row chrome reads as a
     // single visual family.
     let btn_w = 40.0;
@@ -1602,17 +1587,11 @@ pub fn draw_bounce_button(ui: &mut egui::Ui, panel_rect: egui::Rect, top_y: f32)
         "seq.bounce_btn",
         egui::Rect::from_min_size(egui::pos2(btn_x, top_y), egui::vec2(btn_w, btn_h)),
     );
-    let clear_resp = ui.interact(
-        clear_rect,
-        egui::Id::new("seq_clear"),
-        egui::Sense::click(),
-    );
+    let clear_resp = ui.interact(clear_rect, egui::Id::new("seq_clear"), egui::Sense::click());
     let clear_press = clear_resp.is_pointer_button_down_on();
-    let clear_press_amount = ui.ctx().animate_bool_with_time(
-        egui::Id::new("seq_clear_anim"),
-        clear_press,
-        0.06,
-    );
+    let clear_press_amount =
+        ui.ctx()
+            .animate_bool_with_time(egui::Id::new("seq_clear_anim"), clear_press, 0.06);
     {
         let painter = ui.painter();
         let r = crate::ui::layout_overrides::chrome_rounding(ui.ctx(), 3.0);
@@ -1633,11 +1612,9 @@ pub fn draw_bounce_button(ui: &mut egui::Ui, panel_rect: egui::Rect, top_y: f32)
         egui::Sense::click(),
     );
     let pressed = resp.is_pointer_button_down_on();
-    let press_amount = ui.ctx().animate_bool_with_time(
-        egui::Id::new("bounce_btn_anim"),
-        pressed,
-        0.06,
-    );
+    let press_amount =
+        ui.ctx()
+            .animate_bool_with_time(egui::Id::new("bounce_btn_anim"), pressed, 0.06);
     {
         let painter = ui.painter();
         let r = crate::ui::layout_overrides::chrome_rounding(ui.ctx(), 3.0);
@@ -1685,8 +1662,7 @@ pub fn draw_filter_cluster(
         egui::pos2(col_x, knob_y),
         egui::vec2(row_w, small_knob + 22.0),
     );
-    let knob_rect =
-        crate::ui::layout_overrides::instrument(ui, "row.eq.filter_cluster", knob_rect);
+    let knob_rect = crate::ui::layout_overrides::instrument(ui, "row.eq.filter_cluster", knob_rect);
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(knob_rect), |ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         ui.horizontal(|ui| {
@@ -1799,11 +1775,9 @@ pub fn draw_dice_row(
     );
     let resp = ui.interact(btn_rect, egui::Id::new("dice_btn"), egui::Sense::click());
     let pressed = resp.is_pointer_button_down_on();
-    let press_amount = ui.ctx().animate_bool_with_time(
-        egui::Id::new("dice_btn_anim"),
-        pressed,
-        0.06,
-    );
+    let press_amount =
+        ui.ctx()
+            .animate_bool_with_time(egui::Id::new("dice_btn_anim"), pressed, 0.06);
     {
         let painter = ui.painter();
         let r = crate::ui::layout_overrides::chrome_rounding(ui.ctx(), 2.0);
@@ -2163,11 +2137,9 @@ pub fn draw_sequencer_row(
     let visually_pressed = running && !host_synced;
     // Slightly slower animation here than for the momentary buttons so the
     // running latch reads as deliberate state rather than a click flash.
-    let play_press_amount = ui.ctx().animate_bool_with_time(
-        egui::Id::new("seq_play_anim"),
-        visually_pressed,
-        0.10,
-    );
+    let play_press_amount =
+        ui.ctx()
+            .animate_bool_with_time(egui::Id::new("seq_play_anim"), visually_pressed, 0.10);
     {
         let painter = ui.painter();
         let r = crate::ui::layout_overrides::chrome_rounding(ui.ctx(), 3.0);
@@ -2202,8 +2174,7 @@ pub fn draw_sequencer_row(
         egui::pos2(base_pads_start_x, base_pads_top),
         egui::vec2(pads_total_w, pad_h),
     );
-    let pads_rect =
-        crate::ui::layout_overrides::instrument(ui, "seq.pads_cluster", pads_base_rect);
+    let pads_rect = crate::ui::layout_overrides::instrument(ui, "seq.pads_cluster", pads_base_rect);
     let pads_start_x = pads_rect.left();
     let pad_top = pads_rect.top();
 
@@ -2320,11 +2291,9 @@ pub fn draw_sequencer_row(
         // buttons up top. Reads the live `is_pointer_button_down_on` flag
         // (not the latched on/off state, which stays in the red body).
         let pressed_now = resp.is_pointer_button_down_on();
-        let press = ui.ctx().animate_bool_with_time(
-            egui::Id::new(("seq_step_anim", i)),
-            pressed_now,
-            0.06,
-        );
+        let press =
+            ui.ctx()
+                .animate_bool_with_time(egui::Id::new(("seq_step_anim", i)), pressed_now, 0.06);
         let press_offset = egui::vec2(0.0, press * crate::ui::widgets::BTN_PRESS_TRAVEL);
 
         let painter = ui.painter();
@@ -2422,7 +2391,10 @@ pub fn draw_sequencer_row(
             let tick_h = 3.0;
             let tick_inset = 4.0;
             let tick_rect = egui::Rect::from_min_max(
-                egui::pos2(cap_rect.left() + tick_inset, cap_rect.bottom() - tick_h - 1.0),
+                egui::pos2(
+                    cap_rect.left() + tick_inset,
+                    cap_rect.bottom() - tick_h - 1.0,
+                ),
                 egui::pos2(cap_rect.right() - tick_inset, cap_rect.bottom() - 1.0),
             );
             painter.rect_filled(tick_rect, 1.0, theme::WHITE);
@@ -2451,7 +2423,9 @@ pub fn draw_sequencer_row(
     // pointer is currently over. Without this pass, a quick mouse swipe
     // across the row skips any pads the pointer wasn't literally over on
     // a rendered frame.
-    if let (Some(mode), true, Some(hover_idx)) = (ui_state.paint_mode, any_button_down, hovered_step) {
+    if let (Some(mode), true, Some(hover_idx)) =
+        (ui_state.paint_mode, any_button_down, hovered_step)
+    {
         let from = ui_state.last_painted.unwrap_or(hover_idx);
         let (lo, hi) = if from <= hover_idx {
             (from, hover_idx)

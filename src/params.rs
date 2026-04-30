@@ -1036,8 +1036,7 @@ mod clap_param_tests {
         let params = NinerParams::default();
         let snap_a = ParamSnapshot::capture(&params);
         let json = serde_json::to_string(&snap_a).expect("snapshot must serialize");
-        let snap_b: ParamSnapshot =
-            serde_json::from_str(&json).expect("snapshot must deserialize");
+        let snap_b: ParamSnapshot = serde_json::from_str(&json).expect("snapshot must deserialize");
         assert_eq!(
             snap_a, snap_b,
             "ParamSnapshot lost a field during JSON round-trip"
