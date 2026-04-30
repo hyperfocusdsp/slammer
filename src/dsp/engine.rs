@@ -373,23 +373,26 @@ impl KickEngine {
         self.tick_pending_internal()
     }
 
-    pub fn trigger(&mut self, params: &KickParams) {
-        // Voice stealing: if the currently-active slot is still audible,
-        // start its fadeout and flip to the other slot so the new hit lands
-        // on clean state. The old voice keeps ticking in parallel during
-        // the ~5 ms crossfade, summed through the shared saturation/EQ.
+    /// Voice stealing: if the active slot is still audible, start its
+    /// fadeout, advance to the next slot, and fade *that* one too if it's
+    /// also live (pathological case: 3rd retrigger inside the ~5 ms
+    /// fadeout window). Leaves `self.active_voice` pointing at a slot
+    /// safe to retrigger from a near-silent baseline.
+    fn steal_voice(&mut self) {
+        if !self.voices[self.active_voice].is_active() {
+            return;
+        }
+        self.voices[self.active_voice].start_fadeout(self.sample_rate);
+        self.active_voice = (self.active_voice + 1) % NUM_VOICES;
         if self.voices[self.active_voice].is_active() {
             self.voices[self.active_voice].start_fadeout(self.sample_rate);
-            self.active_voice = (self.active_voice + 1) % NUM_VOICES;
-
-            // Pathological case: the "other" slot is also still audible
-            // (a 3rd trigger arrives within the fadeout window of the
-            // previous one). Fade it too, so restarting its state below
-            // happens from a near-silent baseline.
-            if self.voices[self.active_voice].is_active() {
-                self.voices[self.active_voice].start_fadeout(self.sample_rate);
-            }
         }
+    }
+
+    pub fn trigger(&mut self, params: &KickParams) {
+        // The old voice keeps ticking in parallel during the ~5 ms
+        // crossfade, summed through the shared saturation/EQ.
+        self.steal_voice();
         self.voices[self.active_voice].trigger(params, &mut self.drift, self.sample_rate);
 
         if params.clap_on {
@@ -428,13 +431,7 @@ impl KickEngine {
             // Fire any scheduled hits whose countdown reached zero this sample.
             let n_fired = self.tick_pending_internal();
             for _ in 0..n_fired {
-                if self.voices[self.active_voice].is_active() {
-                    self.voices[self.active_voice].start_fadeout(self.sample_rate);
-                    self.active_voice = (self.active_voice + 1) % NUM_VOICES;
-                    if self.voices[self.active_voice].is_active() {
-                        self.voices[self.active_voice].start_fadeout(self.sample_rate);
-                    }
-                }
+                self.steal_voice();
                 self.voices[self.active_voice].trigger(params, &mut self.drift, self.sample_rate);
             }
 
