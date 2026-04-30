@@ -596,12 +596,12 @@ mod tests {
             bits_per_sample: 32,
             sample_format: hound::SampleFormat::Float,
         };
-        let path = if bypass_spectrum {
-            "/tmp/niner_offline_no_spectrum.wav"
+        let path = std::env::temp_dir().join(if bypass_spectrum {
+            "niner_offline_no_spectrum.wav"
         } else {
-            "/tmp/niner_offline_full_chain.wav"
-        };
-        if let Ok(mut wav) = hound::WavWriter::create(path, spec) {
+            "niner_offline_full_chain.wav"
+        });
+        if let Ok(mut wav) = hound::WavWriter::create(&path, spec) {
             for &s in &out {
                 let _ = wav.write_sample(s);
             }
@@ -782,7 +782,7 @@ mod tests {
             bits_per_sample: 32,
             sample_format: hound::SampleFormat::Float,
         };
-        let path = format!("/tmp/niner_offline_{tag}.wav");
+        let path = std::env::temp_dir().join(format!("niner_offline_{tag}.wav"));
         if let Ok(mut wav) = hound::WavWriter::create(&path, spec) {
             for &s in &out {
                 let _ = wav.write_sample(s);
