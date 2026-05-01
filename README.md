@@ -373,6 +373,25 @@ src/
   mismatch many Windows configurations. Pass `--sample-rate` /
   `--period-size` explicitly to override.
 
+## Support and feedback
+
+Bugs, feature requests, or just-saying-hi messages all go to the same
+inbox three different ways:
+
+- **Email:** [feedback@hyperfocusdsp.com](mailto:feedback@hyperfocusdsp.com)
+  — most direct, no JavaScript, no account.
+- **Web form:** [hyperfocusdsp.com/support](https://hyperfocusdsp.com/support)
+  — radios for bug/feature/hi, structured fields, opens your mail client
+  with everything pre-filled.
+- **GitHub Issues:** [bug and feature templates](https://github.com/hyperfocusdsp/niner/issues/new/choose)
+  for everything that benefits from being public and tracked.
+
+Specific repro steps and your DAW + OS line help most. The plugin's
+log file (`~/.local/share/niner/niner.log` on Linux,
+`~/Library/Application Support/Niner/niner.log` on macOS,
+`%APPDATA%\Niner\niner.log` on Windows) is often the fastest fix path
+when something crashes.
+
 ## Dependencies
 
 Built with [nih-plug](https://github.com/robbert-vdh/nih-plug) (plugin

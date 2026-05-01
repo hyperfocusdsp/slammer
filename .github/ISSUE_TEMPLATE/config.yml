@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Not into GitHub? Use the form on the site
+    url: https://hyperfocusdsp.com/support
+    about: Same inbox, no account required. Bug, feature, or just-saying-hi.
+  - name: Read the docs
+    url: https://hyperfocusdsp.com/docs/niner
+    about: Install paths, log locations, supported formats, known limitations.
+  - name: Niner changelog
+    url: https://github.com/hyperfocusdsp/niner/blob/master/CHANGELOG.md
+    about: Check whether your bug already has a fix in a newer release.

@@ -1,0 +1,50 @@
+name: Feature request
+description: Something Niner doesn't do that you wish it did.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Honest tradeoffs over hype. If you can say *why* you want it (what you're
+        trying to make, where the current workflow gets in the way), that helps a lot
+        more than a knob spec on its own. Prefer not to use GitHub? The form at
+        <https://hyperfocusdsp.com/support> goes to the same inbox.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What you want
+      description: One or two sentences.
+      placeholder: |
+        A second LFO routable to per-voice clip drive.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What you're trying to do that the current plugin doesn't let you.
+      placeholder: |
+        I want kick attack to vary subtly across a 16-bar loop without automating drive by hand.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: How you work around it today
+      description: Skip if there's no workaround.
+      placeholder: |
+        Drawing automation by hand on the host's drive parameter, but it doesn't reach per-voice clip.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contact
+    attributes:
+      label: Follow-up
+      options:
+        - label: ok to comment back here if I want to dig deeper into the use case
+          required: false

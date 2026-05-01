@@ -1,0 +1,89 @@
+name: Bug report
+description: Something crashed, behaved weird, or doesn't match the docs.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Specific repro steps + your DAW/OS line are usually
+        enough — don't worry about formatting. Prefer not to use GitHub? The form
+        at <https://hyperfocusdsp.com/support> goes to the same inbox.
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: One or two sentences. What did you do, what did Niner do.
+      placeholder: |
+        Loaded Niner in Reaper, hit play with the 909 voice on, audio cut out after ~2s.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Skip if obvious from the above.
+      placeholder: Audio should keep playing.
+    validations:
+      required: false
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Steps that make it happen reliably, if you've found them.
+      placeholder: |
+        1. Load Niner v0.7.1 in Reaper 7.x on Linux
+        2. Enable the 909 CLAP voice
+        3. Hit play
+        4. After ~2s, audio drops out
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Niner version
+      description: Find it in the plugin's header strip, or run `niner-standalone --version`.
+      placeholder: "0.7.1"
+      value: "0.7.1"
+    validations:
+      required: true
+
+  - type: input
+    id: daw_os
+    attributes:
+      label: DAW + OS
+      placeholder: "Reaper 7.21 / Linux x86_64 (Arch)"
+    validations:
+      required: true
+
+  - type: input
+    id: format
+    attributes:
+      label: Plugin format
+      placeholder: "VST3 / CLAP / Standalone"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log file (optional)
+      description: |
+        Niner writes a log to `~/.local/share/niner/niner.log` on Linux,
+        `~/Library/Application Support/Niner/niner.log` on macOS,
+        `%APPDATA%\Niner\niner.log` on Windows. Paste the last ~50 lines if relevant.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contact
+    attributes:
+      label: Follow-up
+      options:
+        - label: ok to comment back here if I need more info to fix this
+          required: false
