@@ -199,6 +199,19 @@ impl PresetBar {
         let is_editing = self.state.editing;
         let dropdown_open = self.state.dropdown_open;
 
+        // Tick down the transient status flash and decide what the LED shows.
+        // The flash takes over the LED briefly after save/delete (vintage-
+        // hardware style) and reverts to the preset name when the timer
+        // expires. Edit mode owns the LED rect so it never overrides edits.
+        if self.state.status_timer > 0.0 {
+            self.state.status_timer -= dt_seconds;
+        }
+        let display_text = if !is_editing && self.state.status_timer > 0.0 {
+            self.state.status_msg.clone()
+        } else {
+            selected_name.clone()
+        };
+
         // --- Left arrow ---
         let left_rect = crate::ui::layout_overrides::instrument(
             ui,
@@ -266,7 +279,7 @@ impl PresetBar {
         if is_editing {
             self.render_edit_mode(ui, setter, params, preset_manager, led_rect);
         } else {
-            self.render_led_display(ui, setter, params, led_rect, display_w, &selected_name);
+            self.render_led_display(ui, setter, params, led_rect, display_w, &display_text);
             if dropdown_open {
                 self.render_dropdown(ui, setter, params, led_rect, display_w, &selected_name);
             }
@@ -384,8 +397,8 @@ impl PresetBar {
             let result = preset_manager.lock().delete(&selected_name);
             match result {
                 Ok(()) => {
-                    self.state.status_msg = format!("Deleted: {selected_name}");
-                    self.state.status_timer = 2.0;
+                    self.state.status_msg = "DELETED".into();
+                    self.state.status_timer = 1.5;
                     self.reload(preset_manager);
                     // Snap the selection to whatever's now at index 0
                     // (typically "Init", unless that was the one deleted).
@@ -397,8 +410,8 @@ impl PresetBar {
                     }
                 }
                 Err(e) => {
-                    self.state.status_msg = e;
-                    self.state.status_timer = 4.0;
+                    self.state.status_msg = shorten_status(&e);
+                    self.state.status_timer = 2.5;
                     self.reload(preset_manager);
                 }
             }
@@ -428,18 +441,6 @@ impl PresetBar {
             }
         }
 
-        // --- Status message (temporary) ---
-        if self.state.status_timer > 0.0 {
-            self.state.status_timer -= dt_seconds;
-            let msg = self.state.status_msg.clone();
-            ui.painter().text(
-                egui::pos2(del_rect.right() + 8.0, header_center_y),
-                egui::Align2::LEFT_CENTER,
-                &msg,
-                egui::FontId::new(6.0, egui::FontFamily::Monospace),
-                theme::RED_LED,
-            );
-        }
     }
 
     fn render_edit_mode(
@@ -758,18 +759,35 @@ impl PresetBar {
             match result {
                 Ok(()) => {
                     self.state.selected_name = name.clone();
-                    self.state.status_msg = format!("Saved: {name}");
-                    self.state.status_timer = 3.0;
+                    self.state.status_msg = "SAVED".into();
+                    self.state.status_timer = 1.5;
                     crate::presets::save_last_preset_name(&name);
                 }
                 Err(e) => {
-                    self.state.status_msg = e;
-                    self.state.status_timer = 4.0;
+                    self.state.status_msg = shorten_status(&e);
+                    self.state.status_timer = 2.5;
                 }
             }
             self.reload(preset_manager);
         }
         self.state.editing = false;
+    }
+}
+
+/// Coerce an arbitrary error string into something the 7-segment LED can
+/// render: uppercase ASCII (the digital font is uppercase-only) clipped to
+/// the display's character budget. Errors are rare so a generic shortened
+/// form is fine; the full error is still in the log.
+fn shorten_status(msg: &str) -> String {
+    let upper: String = msg
+        .chars()
+        .map(|c| c.to_ascii_uppercase())
+        .filter(|c| !c.is_control())
+        .collect();
+    if upper.chars().count() <= 11 {
+        upper
+    } else {
+        upper.chars().take(11).collect()
     }
 }
 

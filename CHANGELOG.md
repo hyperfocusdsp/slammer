@@ -2,6 +2,27 @@
 
 All notable changes to Niner (formerly Slammer) are documented here.
 
+## [0.7.2] — 2026-05-01
+
+### Fixed
+
+- **Save/delete confirmation no longer overlaps the TEST button.** The
+  transient status flash (previously rendered in 6pt mono next to the DEL
+  button, where it landed on top of TEST) now takes over the LED display
+  itself for a moment — `SAVED` / `DELETED` in the same red 7-seg font
+  as the preset name, then reverts. Errors are shortened to fit the
+  display.
+
+### Presets
+
+- **Factory preset bank refreshed and bundled as JSON.** Each factory
+  preset is now an `assets/factory_presets/*.json` file (same on-disk
+  schema as user presets) loaded via `include_str!`. Replaces the
+  ~635-line `ParamSnapshot` literal block. The 13-preset bank has been
+  re-tuned in production (Clean Sub, Punchy Techno, 909-ish, 808, 909,
+  hh, Init, overdose, psy, sd1, sd2, tight, clap), and a new `niner`
+  preset is included. The deprecated `909old` factory has been removed.
+
 ## [0.7.1] — 2026-05-01
 
 ### UI
