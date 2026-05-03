@@ -3,7 +3,7 @@ members = ["xtask"]
 
 [package]
 name = "niner"
-version = "0.7.2"
+version = "0.7.3"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Kick drum synthesizer plugin"
@@ -76,6 +76,12 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 # RNG for the DICE randomize feature (GUI thread only).
 rand = "0.8"
+
+# Footer "feedback" link — opens the user's mail client with a pre-filled
+# mailto: when clicked. webbrowser abstracts xdg-open/open/start across
+# platforms; urlencoding handles the body's percent-encoding.
+webbrowser = "0.8"
+urlencoding = "2.1"
 
 # Windows-only: direct cpal access so the standalone can probe the default
 # output device and pass matching --sample-rate / --period-size to nih-plug.

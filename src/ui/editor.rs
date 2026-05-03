@@ -200,6 +200,15 @@ pub fn create(
     // on the OUTPUT display once `DISPLAY_BAKED` flips true.
     let display_reflection_texture: Arc<Mutex<Option<egui::TextureHandle>>> =
         Arc::new(Mutex::new(None));
+    // Identity of the egui::Context the cached TextureHandles above were
+    // uploaded against. Bitwig destroys the plugin window's GL context on
+    // close and creates a new one on reopen; the renderer's texture cache
+    // goes with it, but our Arc<Mutex<Option<…>>>'s outlive the closure for
+    // the whole Editor object. Without this, every painter.image after a
+    // reopen targets a freed TextureId — observed as a flood of "Failed to
+    // find texture Managed(N)" warnings in ~/.BitwigStudio/log/engine.log
+    // and a plain-black UI with no logos / chassis / knob caps.
+    let cached_ctx: Arc<Mutex<Option<egui::Context>>> = Arc::new(Mutex::new(None));
     let dice_locks = Arc::new(std::sync::atomic::AtomicU8::new(0));
 
     create_egui_editor(
@@ -220,6 +229,30 @@ pub fn create(
             // follows. We do NOT call `ctx.set_pixels_per_point()` here —
             // that fights baseview and double-scales the layout.
             let _ = &editor_state_clone;
+
+            // Invalidate texture caches when the egui::Context changes. The
+            // `Arc<Mutex<Option<TextureHandle>>>`s captured above outlive any
+            // single GUI window; on Bitwig editor reopen the new context's
+            // texture cache is empty, but `tex.is_none()` would still be
+            // false and the lazy-upload blocks would skip. Clearing here
+            // lets them re-fire against the new context on this frame.
+            {
+                let mut cached = cached_ctx.lock();
+                if cached.as_ref() != Some(ctx) {
+                    *cached = Some(ctx.clone());
+                    *logo_texture.lock() = None;
+                    *hf_logo_texture.lock() = None;
+                    *chassis_texture.lock() = None;
+                    *screws_texture.lock() = None;
+                    *knob_cap_texture.lock() = None;
+                    *display_reflection_texture.lock() = None;
+                    use std::sync::atomic::Ordering;
+                    crate::ui::widgets::CHASSIS_BAKED.store(false, Ordering::Relaxed);
+                    crate::ui::widgets::SCREWS_BAKED.store(false, Ordering::Relaxed);
+                    crate::ui::widgets::KNOB_CAP_BAKED.store(false, Ordering::Relaxed);
+                    crate::ui::widgets::DISPLAY_BAKED.store(false, Ordering::Relaxed);
+                }
+            }
 
             // Drain audio-thread telemetry into the waveform ring.
             drain_telemetry(&telemetry, &waveform);
@@ -905,6 +938,56 @@ pub fn create(
                             if logo_resp.hovered() {
                                 logo_resp.on_hover_text("Made by Hyperfocus DSP");
                             }
+                        }
+                    }
+
+                    // Footer "feedback" link — sits opposite the wordmark,
+                    // opens the system mail client with a pre-filled mailto
+                    // so reports land with version + OS + arch attached.
+                    {
+                        let feedback_w = 50.0;
+                        let feedback_h = 8.0;
+                        let strip_y = panel_rect.bottom() - 21.0;
+                        let base_pos = egui::pos2(
+                            panel_rect.right() - CONTENT_LEFT,
+                            strip_y + feedback_h * 0.5,
+                        );
+                        let feedback_pos = crate::ui::layout_overrides::instrument_text(
+                            ui,
+                            "footer.feedback_link",
+                            base_pos,
+                            egui::vec2(feedback_w, feedback_h),
+                            egui::Align2::RIGHT_CENTER,
+                        );
+                        let hit = egui::Rect::from_min_size(
+                            egui::pos2(
+                                feedback_pos.x - feedback_w,
+                                feedback_pos.y - feedback_h * 0.5,
+                            ),
+                            egui::vec2(feedback_w, feedback_h),
+                        );
+                        let resp = ui
+                            .interact(
+                                hit,
+                                egui::Id::new("footer_feedback"),
+                                egui::Sense::click(),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text("Send feedback (opens your mail client)");
+                        let color = if resp.hovered() {
+                            theme::WHITE
+                        } else {
+                            theme::TEXT_DIM
+                        };
+                        ui.painter().text(
+                            feedback_pos,
+                            egui::Align2::RIGHT_CENTER,
+                            "feedback",
+                            egui::FontId::new(8.0, egui::FontFamily::Monospace),
+                            color,
+                        );
+                        if resp.clicked() {
+                            crate::util::feedback::open_feedback();
                         }
                     }
 
