@@ -65,6 +65,9 @@ jobs:
           cp "target/${BUILD_TARGET}/release/niner-standalone" "staging/${ARTIFACT_NAME}/" || true
           cp install.sh "staging/${ARTIFACT_NAME}/"
           cp CHANGELOG.md README.md "staging/${ARTIFACT_NAME}/"
+          mkdir -p "staging/${ARTIFACT_NAME}/tools"
+          cp tools/niner-launch.sh "staging/${ARTIFACT_NAME}/tools/"
+          cp tools/niner.desktop.template "staging/${ARTIFACT_NAME}/tools/"
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             cp scripts/niner-macos.sh "staging/${ARTIFACT_NAME}/"
             chmod +x "staging/${ARTIFACT_NAME}/niner-macos.sh"

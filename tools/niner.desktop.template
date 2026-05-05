@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Niner
+Comment=Niner kick synth (standalone)
+Exec=__BIN_DIR__/niner-launch
+Type=Application
+Categories=AudioVideo;Audio;Music;
+Keywords=audio;plugin;synth;kick;drum;hyperfocus;

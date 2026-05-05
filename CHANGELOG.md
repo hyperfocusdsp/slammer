@@ -2,6 +2,29 @@
 
 All notable changes to Niner (formerly Slammer) are documented here.
 
+## [0.7.5] — 2026-05-05
+
+### Added
+
+- **Linux desktop launcher.** `install.sh` on Linux now installs a
+  `niner-launch` shim to `~/.local/bin/` and a `niner.desktop` entry
+  to `~/.local/share/applications/`. Niner shows up in your
+  application menu / rofi / Spotlight-equivalent and launches at the
+  UI scale you last picked. Skip with `install.sh --no-desktop` for
+  headless boxes / CI. The shim reads the persisted scale from
+  `$XDG_DATA_HOME/niner/ui_scale.txt`, chains through
+  `nih-standalone-wrapper` if present (PipeWire quantum pin), and
+  forwards `--dpi-scale` to `niner-standalone`.
+
+### Fixed
+
+- **In-GUI scale badge now applies on next launch.** Clicking the UI
+  scale badge in the header (1× / 1.5× / 2×) wrote the chosen factor
+  to a sidecar file but had no way of forwarding it to the standalone
+  on relaunch — every launch fell back to 1× regardless of what the
+  badge said. The new `niner-launch` shim closes that loop. DAW hosts
+  were unaffected (the value persists via nih-plug's `#[persist]`).
+
 ## [0.7.4] — 2026-05-05
 
 ### Fixed
