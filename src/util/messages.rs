@@ -1,4 +1,5 @@
-//! Lock-free UI → audio message queue.
+//! Lock-free UI → audio message queue, plus its DSP → UI counterpart for
+//! MIDI Learn.
 //!
 //! The editor runs on its own thread and must not block the audio thread
 //! when it wants to tell the engine to do something (trigger a test kick,
@@ -6,11 +7,11 @@
 //! buffer gives us that: the UI pushes `UiToDsp` messages, `process()`
 //! drains them at the top of the block with `try_pop()` and never blocks.
 //!
-//! Today the only message is a test trigger from the on-screen button and
-//! the `T` keyboard shortcut, but this infrastructure leaves room to add
-//! more (manual voice reset, engine reseed, etc.) without reintroducing
-//! another ad-hoc `AtomicBool`.
+//! The DSP → UI direction is symmetrical and used to forward incoming
+//! MIDI events (CC and selectively NoteOn) from `process()` into the
+//! editor's MIDI Learn / mapping pipeline (see [`crate::midi_map`]).
 
+use crate::midi_map::MidiInputEvent;
 use rtrb::{Consumer, Producer, RingBuffer};
 
 /// Capacity of the UI → DSP queue.
@@ -20,6 +21,15 @@ use rtrb::{Consumer, Producer, RingBuffer};
 /// overflow is dropped silently (the user just doesn't hear that one
 /// trigger).
 const QUEUE_CAPACITY: usize = 32;
+
+/// Capacity of the DSP → UI MIDI event queue. Sized for sustained streams
+/// from a knob-twisty controller (BeatStep, BCR2000) — at typical 60 fps
+/// editor refresh and ~50 events/sec/knob the queue never fills, but a
+/// bigger buffer keeps us safe under load. Overflow drops the new event
+/// silently; MIDI Learn isn't latency-sensitive, but losing the latest
+/// value is the less surprising failure mode than displacing an in-flight
+/// one.
+const MIDI_EVENT_QUEUE_CAPACITY: usize = 256;
 
 /// Commands the UI thread can send to the audio thread.
 #[derive(Clone, Copy, Debug)]
@@ -32,4 +42,10 @@ pub enum UiToDsp {
 /// (in the `Plugin` constructor).
 pub fn channel() -> (Producer<UiToDsp>, Consumer<UiToDsp>) {
     RingBuffer::new(QUEUE_CAPACITY)
+}
+
+/// Allocate a fresh DSP → UI MIDI event channel. Call exactly once per
+/// plugin instance.
+pub fn midi_event_channel() -> (Producer<MidiInputEvent>, Consumer<MidiInputEvent>) {
+    RingBuffer::new(MIDI_EVENT_QUEUE_CAPACITY)
 }

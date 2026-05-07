@@ -12,13 +12,14 @@ use crate::dsp::master_bus::MasterBus;
 use crate::dsp::spectrum::SpectrumAnalyzer;
 use crate::dsp::tube::TubeWarmth;
 use crate::logging;
+use crate::midi_map::{MidiInputEvent, NoteBlockMap};
 use crate::params::{collect_kick_params, NinerParams};
 use crate::presets::PresetManager;
 use crate::sequencer::{self, Sequencer};
 use crate::util::messages::{self, UiToDsp};
 use crate::util::telemetry::{self, MeterShared, SpectrumShared, TelemetryProducer};
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Final-stage safety clipper applied per-sample after master volume,
 /// before the output buffer. Signals below `SC_THRESHOLD` pass through
@@ -70,6 +71,28 @@ pub struct Niner {
     /// on the audio thread.
     pub ui_tx_holder: Arc<Mutex<Option<rtrb::Producer<UiToDsp>>>>,
     ui_rx: rtrb::Consumer<UiToDsp>,
+    /// DSP → UI MIDI event queue. The audio thread pushes incoming CCs and
+    /// "interesting" note-ons (those whose `(channel, note)` is bound to a
+    /// knob and therefore must NOT trigger the kick); the editor drains
+    /// them per frame, consults `params.midi_learn`, and either records a
+    /// binding (LEARN mode) or routes the value through `ParamSetter`.
+    /// Producer is owned by the audio thread; consumer waits in the holder
+    /// until `editor()` runs and moves it into the editor closure.
+    midi_event_tx: rtrb::Producer<MidiInputEvent>,
+    pub midi_event_rx_holder: Arc<Mutex<Option<rtrb::Consumer<MidiInputEvent>>>>,
+    /// Lock-free `(channel, note) → bound?` lookup, shared with the editor.
+    /// Audio thread reads it on every `NoteOn` to decide whether to fire the
+    /// engine; GUI thread updates it whenever a note binding is added or
+    /// removed. Empty by default — so untouched standalones and DAW projects
+    /// behave exactly like the pre-MIDI-Learn build.
+    pub note_block_map: Arc<NoteBlockMap>,
+    /// Monotonically-increasing counter bumped on every incoming MIDI event
+    /// (CC + NoteOn, blocked or not). The editor reads it once per frame
+    /// to drive the small "MIDI" activity indicator in the OUTPUT display:
+    /// while the counter advances, the LED stays lit; otherwise it decays.
+    /// Single relaxed atomic op per event — RT-safe under
+    /// `assert_process_allocs`.
+    pub midi_activity: Arc<AtomicU64>,
     pub preset_manager: Arc<Mutex<PresetManager>>,
     /// 16-step pattern sequencer shared with the editor.
     pub sequencer: Arc<Sequencer>,
@@ -89,17 +112,96 @@ pub struct Niner {
     /// Previous buffer's `sequencer.running` value — used to detect the
     /// play-toggle rising edge and reset to step 1.
     seq_running_prev: bool,
+    /// Audio-thread liveness counter — incremented once per `process()` call
+    /// from the audio thread (lock-free, no allocation). A background
+    /// heartbeat thread (spawned in `Default::default()`) reads this every
+    /// 2 s and emits a WARN log when it stops advancing, so the user can
+    /// distinguish "JACK silently went away" (e.g. after `restartaudio`)
+    /// from a real code regression. The counter is just `Arc<AtomicU64>`
+    /// — increment is one relaxed `fetch_add`, free of allocator
+    /// involvement, so it's safe under `assert_process_allocs`.
+    process_heartbeat: Arc<AtomicU64>,
+}
+
+/// Spawn the heartbeat thread that watches `process_heartbeat` for stalls.
+///
+/// Runs forever (until process exits); not joined on plugin Drop because
+/// nih-plug doesn't give us a clean shutdown hook for standalone, and the
+/// thread is small + cheap.
+fn spawn_heartbeat_thread(heartbeat: Arc<AtomicU64>) {
+    let _ = std::thread::Builder::new()
+        .name("niner-heartbeat".into())
+        .spawn(move || {
+            const TICK: std::time::Duration = std::time::Duration::from_secs(2);
+            const FIRST_WARN_TICKS: u32 = 2; // ~4 s of silence
+            let mut last = 0u64;
+            let mut quiet_ticks = 0u32;
+            let mut total_ticks_since_status = 0u32;
+            let mut last_status_count = 0u64;
+            // Wait one tick before first read so initialize() has a chance
+            // to settle and we don't fire an immediate "AUDIO DEAD" the
+            // moment the plugin loads (process() may take a beat to start).
+            std::thread::sleep(TICK);
+            loop {
+                let now = heartbeat.load(Ordering::Relaxed);
+                let delta = now.saturating_sub(last);
+
+                if delta == 0 {
+                    quiet_ticks += 1;
+                    let quiet_secs = quiet_ticks * (TICK.as_secs() as u32);
+                    if quiet_ticks == FIRST_WARN_TICKS {
+                        tracing::warn!(
+                            "[heartbeat] AUDIO DEAD: process() stopped (~{quiet_secs}s, counter={now}). \
+                             JACK most likely went away (e.g. `restartaudio`). \
+                             Recovery: kill + relaunch this niner-standalone."
+                        );
+                    } else if quiet_ticks > FIRST_WARN_TICKS && quiet_ticks % 5 == 0 {
+                        tracing::warn!(
+                            "[heartbeat] still dead after ~{quiet_secs}s (counter={now})"
+                        );
+                    }
+                } else {
+                    if quiet_ticks >= FIRST_WARN_TICKS {
+                        let recovered_after = quiet_ticks * (TICK.as_secs() as u32);
+                        tracing::info!(
+                            "[heartbeat] AUDIO RESUMED after ~{recovered_after}s of silence \
+                             ({delta} new calls in the last {}s)",
+                            TICK.as_secs()
+                        );
+                    }
+                    quiet_ticks = 0;
+                }
+
+                // Periodic baseline INFO every ~30 s so the log always has a
+                // recent "I am alive" entry without flooding.
+                total_ticks_since_status += 1;
+                if total_ticks_since_status >= 15 {
+                    let recent = now.saturating_sub(last_status_count);
+                    tracing::info!(
+                        "[heartbeat] healthy: {recent} process() calls in last 30s (counter={now})"
+                    );
+                    last_status_count = now;
+                    total_ticks_since_status = 0;
+                }
+
+                last = now;
+                std::thread::sleep(TICK);
+            }
+        });
 }
 
 impl Default for Niner {
     fn default() -> Self {
         let (telem_tx, telem_rx) = telemetry::channel();
         let (ui_tx, ui_rx) = messages::channel();
+        let (midi_event_tx, midi_event_rx) = messages::midi_event_channel();
         let params = Arc::new(NinerParams::default());
         let sequencer = Arc::new(Sequencer::new(
             Arc::clone(&params.seq_steps),
             Arc::clone(&params.seq_accents),
         ));
+        let process_heartbeat = Arc::new(AtomicU64::new(0));
+        spawn_heartbeat_thread(Arc::clone(&process_heartbeat));
         Self {
             params,
             engine: KickEngine::new(44100.0),
@@ -114,6 +216,10 @@ impl Default for Niner {
             spectrum: SpectrumAnalyzer::new(44100.0),
             ui_tx_holder: Arc::new(Mutex::new(Some(ui_tx))),
             ui_rx,
+            midi_event_tx,
+            midi_event_rx_holder: Arc::new(Mutex::new(Some(midi_event_rx))),
+            note_block_map: Arc::new(NoteBlockMap::new()),
+            midi_activity: Arc::new(AtomicU64::new(0)),
             preset_manager: Arc::new(Mutex::new(PresetManager::new())),
             sequencer,
             seq_sample_counter: 0,
@@ -122,6 +228,7 @@ impl Default for Niner {
             host_ever_stopped: false,
             last_host_step: None,
             seq_running_prev: false,
+            process_heartbeat,
         }
     }
 }
@@ -139,7 +246,11 @@ impl Plugin for Niner {
         ..AudioIOLayout::const_default()
     }];
 
-    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
+    // MidiCCs lets nih-plug deliver `NoteEvent::MidiCC` events into our
+    // `process()` event loop, which we forward through an SPSC queue to the
+    // GUI thread for MIDI Learn / mapping. Without this, the framework
+    // filters CCs out before we ever see them.
+    const MIDI_INPUT: MidiConfig = MidiConfig::MidiCCs;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
 
@@ -155,15 +266,21 @@ impl Plugin for Niner {
         let params = Arc::clone(&self.params);
         let telemetry_rx = self.telemetry_rx_holder.take();
         let ui_tx = self.ui_tx_holder.lock().take();
+        let midi_event_rx = self.midi_event_rx_holder.lock().take();
         let preset_manager = Arc::clone(&self.preset_manager);
         let sequencer = Arc::clone(&self.sequencer);
         let meter = Arc::clone(&self.meter_shared);
         let spectrum = Arc::clone(&self.spectrum_shared);
+        let note_block_map = Arc::clone(&self.note_block_map);
+        let midi_activity = Arc::clone(&self.midi_activity);
         crate::ui::editor::create(
             self.params.editor_state.clone(),
             params,
             telemetry_rx,
             ui_tx,
+            midi_event_rx,
+            note_block_map,
+            midi_activity,
             preset_manager,
             sequencer,
             meter,
@@ -211,6 +328,9 @@ impl Plugin for Niner {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        // Heartbeat for liveness monitoring — relaxed atomic increment is a
+        // single CPU op, allocator-free, RT-safe under `assert_process_allocs`.
+        self.process_heartbeat.fetch_add(1, Ordering::Relaxed);
         let num_samples = buffer.samples();
         let kick_params = collect_kick_params(&self.params);
 
@@ -224,8 +344,48 @@ impl Plugin for Niner {
         }
 
         while let Some(event) = context.next_event() {
-            if let NoteEvent::NoteOn { .. } = event {
-                self.engine.trigger(&kick_params);
+            match event {
+                NoteEvent::NoteOn {
+                    channel,
+                    note,
+                    velocity,
+                    ..
+                } => {
+                    self.midi_activity.fetch_add(1, Ordering::Relaxed);
+                    // If this `(channel, note)` has been bound to a knob via
+                    // MIDI Learn, treat it as a controller — forward to the
+                    // editor for param-set, do NOT trigger the kick. This is
+                    // the BeatStep "encoder rotation fires kicks" fix.
+                    // Lookup is a single relaxed atomic load + bit test.
+                    if self.note_block_map.is_blocked(channel, note) {
+                        let _ = self.midi_event_tx.push(MidiInputEvent::NoteOn {
+                            channel,
+                            note,
+                            velocity,
+                        });
+                    } else {
+                        // Default behaviour preserved for every existing user:
+                        // any unbound note triggers the kick. Pads on the
+                        // BeatStep, MIDI keyboards, sequenced notes from a
+                        // DAW track all keep working without configuration.
+                        self.engine.trigger(&kick_params);
+                    }
+                }
+                NoteEvent::MidiCC {
+                    channel,
+                    cc,
+                    value,
+                    ..
+                } => {
+                    self.midi_activity.fetch_add(1, Ordering::Relaxed);
+                    // Forward CCs to the editor's MIDI Learn pipeline. Push
+                    // is non-blocking; if the queue overflows (>256 events
+                    // un-drained, ~4 s of sustained traffic at 60 Hz) the
+                    // newest event is dropped silently — MIDI Learn isn't
+                    // realtime-critical.
+                    let _ = self.midi_event_tx.push(MidiInputEvent::Cc { channel, cc, value });
+                }
+                _ => {}
             }
         }
 

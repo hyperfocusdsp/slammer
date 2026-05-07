@@ -4,6 +4,12 @@ use nih_plug_egui::egui;
 pub struct KnobResponse {
     pub changed: bool,
     pub reset: bool,
+    /// Inner click-and-drag response of the knob rect itself (not the
+    /// surrounding column). `None` only on the very first frame before
+    /// allocation; populated for every subsequent frame. Callers attach
+    /// `.context_menu()` to this when they want a right-click menu (e.g.
+    /// MIDI Learn) anchored on the knob, not the label below.
+    pub response: Option<egui::Response>,
 }
 
 /// G3 industrial knob: rubber grip ring + beveled metal core + tapered indicator.
@@ -95,6 +101,7 @@ fn knob_inner(
     let mut result = KnobResponse {
         changed: false,
         reset: false,
+        response: None,
     };
 
     // Compact knobs need 8 px of padding (was 4) so the new tick-dot zone
@@ -137,6 +144,11 @@ fn knob_inner(
         if !tooltip.is_empty() {
             response = response.on_hover_text(tooltip);
         }
+        // Hand the inner knob rect's response back to the caller so they
+        // can attach `.context_menu()` (used by MIDI Learn). Cloned out of
+        // the `ui.vertical` closure scope so the outer caller can use it
+        // after the closure returns.
+        result.response = Some(response.clone());
 
         // Ctrl+click or double-click to reset.
         // Note: response.double_clicked() is unreliable under baseview (raw
@@ -326,11 +338,23 @@ fn knob_inner(
                 painter.circle_filled(dot_center, dot_radius, theme::KNOB_INDICATOR);
             }
 
-            // 8. Write value to display when hovered/dragged
+            // 8. Write value to display when hovered/dragged. The expiry
+            // timestamp lets the OUTPUT display linger on the most-recent
+            // readout for ~500 ms after the user stops interacting, so
+            // tweaking a knob and releasing doesn't blink the value off
+            // immediately. Reader side (panels.rs) checks the expiry
+            // before rendering and schedules a repaint when it lapses.
             if response.hovered() || response.dragged() {
                 let display_text = format!("{} {}", label, format_value(*value));
-                ui.ctx()
-                    .data_mut(|d| d.insert_temp(egui::Id::new("knob_display"), display_text));
+                let expires_at = std::time::Instant::now()
+                    + std::time::Duration::from_millis(500);
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(egui::Id::new("knob_display"), display_text);
+                    d.insert_temp::<std::time::Instant>(
+                        egui::Id::new("knob_display_expires"),
+                        expires_at,
+                    );
+                });
             }
         }
 

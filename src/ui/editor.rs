@@ -9,17 +9,23 @@ use nih_plug::prelude::*;
 use nih_plug_egui::egui;
 use nih_plug_egui::{create_egui_editor, EguiState};
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 
 use crate::export::{self, ExportOutcome};
+use crate::midi_map::{
+    decode_relative_delta, detect_cc_encoding, sentinel, CcEncoding, MidiInputEvent,
+    MidiSource, NoteBlockMap,
+};
 use crate::params::NinerParams;
 use crate::presets::PresetManager;
 use crate::sequencer::Sequencer;
 use crate::ui::panels::{self, CONTENT_LEFT, KNOB_SPACING};
 use crate::ui::preset_bar::PresetBar;
 use crate::ui::theme;
+use crate::ui::widgets::{self, MidiLearnCtx};
 use crate::util::messages::UiToDsp;
 use crate::util::telemetry::{MeterShared, SpectrumShared, TelemetryConsumer};
 
@@ -138,6 +144,9 @@ pub fn create(
     params: Arc<NinerParams>,
     telemetry_rx: Option<TelemetryConsumer>,
     ui_tx: Option<rtrb::Producer<UiToDsp>>,
+    midi_event_rx: Option<rtrb::Consumer<MidiInputEvent>>,
+    note_block_map: Arc<NoteBlockMap>,
+    midi_activity: Arc<AtomicU64>,
     preset_manager: Arc<Mutex<PresetManager>>,
     sequencer: Arc<Sequencer>,
     meter: Arc<MeterShared>,
@@ -211,6 +220,57 @@ pub fn create(
     let cached_ctx: Arc<Mutex<Option<egui::Context>>> = Arc::new(Mutex::new(None));
     let dice_locks = Arc::new(std::sync::atomic::AtomicU8::new(0));
 
+    // ── MIDI Learn plumbing ──
+    // Build the param-id ↔ ParamPtr lookups once. `param_map()` walks the
+    // `#[derive(Params)]` reflection metadata; the result is stable for the
+    // lifetime of `params`, so we freeze both directions here.
+    //
+    // `id_to_ptr` is consumed by the GUI when applying an incoming CC: given
+    // a binding's stored param_id string, find the underlying ParamPtr and
+    // route the value through `setter.raw_context.raw_set_parameter_normalized`.
+    //
+    // `ptr_to_id` is the reverse: every `param_knob` call site already passes
+    // `&FloatParam`, and at paint time we look up that pointer to identify
+    // the param for the right-click menu — so no call site changes are needed
+    // to opt into MIDI Learn.
+    let (id_to_ptr, ptr_to_id): (
+        Arc<HashMap<String, ParamPtr>>,
+        Arc<HashMap<usize, String>>,
+    ) = {
+        let mut id_to_ptr = HashMap::new();
+        let mut ptr_to_id = HashMap::new();
+        for (id, ptr, _name) in params.param_map() {
+            let raw = match ptr {
+                ParamPtr::FloatParam(p) => p as usize,
+                ParamPtr::IntParam(p) => p as usize,
+                ParamPtr::BoolParam(p) => p as usize,
+                ParamPtr::EnumParam(p) => p as usize,
+            };
+            ptr_to_id.insert(raw, id.clone());
+            id_to_ptr.insert(id, ptr);
+        }
+        (Arc::new(id_to_ptr), Arc::new(ptr_to_id))
+    };
+    let midi_learn_state = Arc::clone(&params.midi_learn);
+    let learn_armed: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let midi_event_rx = Arc::new(Mutex::new(midi_event_rx));
+    // Sync the audio-thread NoteOn block bitmap with whatever's in the
+    // persisted state on first frame. Without this, a session that already
+    // has note bindings would still trigger the kick on every learned pad
+    // until the user re-binds.
+    note_block_map.rebuild_from(&midi_learn_state.lock());
+    // MIDI activity indicator state — `last_count` snapshots the audio
+    // thread's per-event counter; `last_change` records when we last
+    // observed the counter advance, so we can decay the LED over ~200 ms
+    // back to its dim resting colour. Held in `Arc<Mutex<>>` so the
+    // captured `move` closure can mutate them across frames.
+    let midi_activity_seen: Arc<Mutex<(u64, std::time::Instant)>> = Arc::new(Mutex::new((
+        0,
+        std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(60))
+            .unwrap_or_else(std::time::Instant::now),
+    )));
+
     create_egui_editor(
         editor_state,
         (),
@@ -256,6 +316,204 @@ pub fn create(
 
             // Drain audio-thread telemetry into the waveform ring.
             drain_telemetry(&telemetry, &waveform);
+
+            // Publish the MIDI Learn context so `param_knob` (and any other
+            // widget that wants to expose a Learn menu) can pick it up via
+            // `egui::Context::data` without us threading three more args
+            // through every call site. Re-published every frame because
+            // `insert_temp` doesn't survive the egui frame swap on every
+            // backend.
+            widgets::install_midi_learn_ctx(
+                ctx,
+                MidiLearnCtx {
+                    state: Arc::clone(&midi_learn_state),
+                    armed: Arc::clone(&learn_armed),
+                    ptr_to_id: Arc::clone(&ptr_to_id),
+                    note_block_map: Arc::clone(&note_block_map),
+                },
+            );
+
+            // MIDI activity indicator: read the audio thread's monotonic
+            // counter, freshen the "last seen" timestamp if it changed,
+            // then publish a 0..1 intensity (1 = lit, 0 = dim) into
+            // `ctx.data` so the tempo widget can render the dot. Decay
+            // window 200 ms — a single CC event flashes the dot for two
+            // or three frames, which reads as a definite blink without
+            // looking jittery. We re-publish even when the counter
+            // hasn't moved so the consumer can rely on the value being
+            // current every frame.
+            let intensity = {
+                let now = midi_activity.load(Ordering::Relaxed);
+                let mut guard = midi_activity_seen.lock();
+                if now != guard.0 {
+                    guard.0 = now;
+                    guard.1 = std::time::Instant::now();
+                }
+                let elapsed = guard.1.elapsed().as_secs_f32();
+                (1.0 - elapsed / 0.2).clamp(0.0, 1.0)
+            };
+            ctx.data_mut(|d| {
+                d.insert_temp::<f32>(egui::Id::new("niner_midi_activity"), intensity);
+            });
+
+            // Drain the audio thread's MIDI event queue. Each event is
+            // either a CC or a (pre-filtered) NoteOn — see plugin.rs for
+            // the audio-side logic that decides which NoteOns reach this
+            // queue. For each event we either:
+            //   1) Capture it as the binding for the currently-armed
+            //      param (LEARN mode), or
+            //   2) Look up an existing binding and write the value back
+            //      to the bound param via `ParamSetter`'s raw context
+            //      (so the host sees it as automation). Unbound events
+            //      are silently dropped.
+            //
+            // We go through `setter.raw_context` directly so we can drive
+            // a `ParamPtr` (which `param_map()` hands back) instead of a
+            // typed `&FloatParam` — there's no compile-time variant for
+            // "generic param by id".
+            {
+                let mut rx_guard = midi_event_rx.lock();
+                if let Some(rx) = rx_guard.as_mut() {
+                    while let Ok(event) = rx.pop() {
+                        let (channel, source, value) = match event {
+                            MidiInputEvent::Cc { channel, cc, value } => {
+                                (channel, MidiSource::Cc(cc), value)
+                            }
+                            MidiInputEvent::NoteOn {
+                                channel,
+                                note,
+                                velocity,
+                            } => (channel, MidiSource::NoteOn(note), velocity),
+                        };
+
+                        // 1) LEARN: consume the armed param if any.
+                        let mut armed_guard = learn_armed.lock();
+                        if let Some(armed_id) = armed_guard.take() {
+                            // Auto-detect the encoding from the captured
+                            // value's signature. Notes are always absolute
+                            // (velocity → value), so we keep `Absolute`
+                            // for `MidiSource::NoteOn` and only run the
+                            // heuristic for CC sources. The user can
+                            // override from the right-click menu if the
+                            // first-tick guess was unlucky.
+                            let encoding = match source {
+                                MidiSource::Cc(_) => detect_cc_encoding(value),
+                                MidiSource::NoteOn(_) => CcEncoding::Absolute,
+                            };
+                            let old = {
+                                let mut state = midi_learn_state.lock();
+                                let prev = state.binding_for_param(&armed_id);
+                                state.bind(channel, source, &armed_id, encoding);
+                                prev
+                            };
+                            // Keep the audio-thread NoteBlockMap in sync.
+                            // Clear any prior block for this param (in case
+                            // the user is rebinding from a note to a CC, or
+                            // to a different note), and add the new one if
+                            // applicable.
+                            if let Some((old_ch, MidiSource::NoteOn(old_note), _)) = old {
+                                note_block_map.unblock(old_ch, old_note);
+                            }
+                            if let MidiSource::NoteOn(note) = source {
+                                note_block_map.block(channel, note);
+                            }
+                            // armed_guard is now None (we used `take`).
+                            continue;
+                        }
+                        drop(armed_guard);
+
+                        // 2) APPLY: look up the binding and write through.
+                        let bound = midi_learn_state
+                            .lock()
+                            .lookup(channel, source)
+                            .map(|(id, enc)| (id.to_string(), enc));
+                        let Some((param_id, encoding)) = bound else {
+                            continue;
+                        };
+
+                        // 2a) Sentinel targets — non-`Param` bindings like
+                        // the standalone tempo or sequencer-play toggle.
+                        match param_id.as_str() {
+                            sentinel::TEMPO => {
+                                // Skip when the host owns the transport.
+                                if sequencer.is_host_synced() {
+                                    continue;
+                                }
+                                // BPM range matches `Sequencer::set_bpm`'s
+                                // internal clamp. Relative encoders nudge
+                                // by 1 BPM per detent (1/8 with shift).
+                                let new_bpm = match encoding {
+                                    CcEncoding::Absolute => 40.0 + value * (240.0 - 40.0),
+                                    CcEncoding::BinaryOffset
+                                    | CcEncoding::Centered => {
+                                        let delta = decode_relative_delta(value, encoding);
+                                        let fine = ctx.input(|i| i.modifiers.shift);
+                                        let step = if fine { 0.125 } else { 1.0 };
+                                        (sequencer.bpm() + delta as f32 * step)
+                                            .clamp(40.0, 240.0)
+                                    }
+                                };
+                                sequencer.set_bpm(new_bpm);
+                                continue;
+                            }
+                            sentinel::SEQ_PLAY => {
+                                // Toggle on rising edge. Notes use
+                                // velocity > 0; absolute CC uses value
+                                // > 0.5; relative CCs ignore "no-op"
+                                // values and trigger on any non-zero
+                                // delta.
+                                let trigger = match encoding {
+                                    CcEncoding::Absolute => value > 0.5,
+                                    CcEncoding::BinaryOffset
+                                    | CcEncoding::Centered => {
+                                        decode_relative_delta(value, encoding) != 0
+                                    }
+                                };
+                                if trigger {
+                                    sequencer.toggle_running();
+                                }
+                                continue;
+                            }
+                            _ => {}
+                        }
+
+                        // 2b) Normal `Param` target.
+                        if let Some(&ptr) = id_to_ptr.get(&param_id) {
+                            // For relative encoders, decode the value as
+                            // a signed step delta and accumulate onto
+                            // the param's current normalized value.
+                            // Step granularity = 1/64 of full range per
+                            // detent normally, /8 finer when the host's
+                            // keyboard shift modifier is held.
+                            //
+                            // SAFETY: `setter.raw_context` is the live
+                            // `dyn GuiContext` for this editor instance,
+                            // and `ptr` came from this editor's own
+                            // `params.param_map()`. Both live as long
+                            // as the editor frame.
+                            let new_value = match encoding {
+                                CcEncoding::Absolute => value,
+                                CcEncoding::BinaryOffset | CcEncoding::Centered => {
+                                    let delta = decode_relative_delta(value, encoding);
+                                    let fine = ctx.input(|i| i.modifiers.shift);
+                                    let steps_per_range = if fine { 512.0 } else { 64.0 };
+                                    let delta_norm = delta as f32 / steps_per_range;
+                                    let current =
+                                        unsafe { ptr.unmodulated_normalized_value() };
+                                    (current + delta_norm).clamp(0.0, 1.0)
+                                }
+                            };
+                            unsafe {
+                                setter.raw_context.raw_begin_set_parameter(ptr);
+                                setter
+                                    .raw_context
+                                    .raw_set_parameter_normalized(ptr, new_value);
+                                setter.raw_context.raw_end_set_parameter(ptr);
+                            }
+                        }
+                    }
+                }
+            }
 
             // Restore last-used preset once the audio thread has confirmed
             // we're standalone. Skipped entirely in DAW mode — the host

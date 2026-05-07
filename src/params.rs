@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::dsp::engine::KickParams;
+use crate::midi_map::MidiMapState;
 use crate::sequencer::{DEFAULT_ACCENT_BITS, DEFAULT_STEP_BITS};
 
 // ---------------------------------------------------------------------------
@@ -116,6 +117,15 @@ pub struct NinerParams {
     /// next-opened window comes up at the requested size.
     #[persist = "ui-scale-v1"]
     pub ui_scale: Arc<Mutex<f32>>,
+
+    /// In-plugin MIDI Learn bindings (CC → param). Populated by the user
+    /// via right-click → MIDI Learn on any knob. nih-plug serialises this
+    /// inside DAW projects; the standalone wrapper persists it through the
+    /// same `getStateInformation` round-trip on close. Legacy session state
+    /// without a `midi_learn_v1` payload deserialises to an empty
+    /// `MidiMapState` so old projects load cleanly.
+    #[persist = "midi_learn_v1"]
+    pub midi_learn: Arc<Mutex<MidiMapState>>,
 
     #[id = "master_vol"]
     pub master_volume: FloatParam,
@@ -377,6 +387,8 @@ impl Default for NinerParams {
             seq_accents: Arc::new(Mutex::new(DEFAULT_ACCENT_BITS)),
 
             ui_scale: Arc::new(Mutex::new(ui_scale)),
+
+            midi_learn: Arc::new(Mutex::new(MidiMapState::default())),
 
             master_volume: db_knob("Master Volume", 0.0, -60.0, 6.0),
 

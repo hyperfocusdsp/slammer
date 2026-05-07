@@ -31,6 +31,7 @@ pub mod dsp {
     pub mod tube;
     pub mod voice_clip;
 }
+pub mod midi_map;
 pub mod params;
 pub mod sequencer;
 

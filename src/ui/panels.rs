@@ -554,17 +554,27 @@ impl<'a> MasterRow<'a> {
                 );
             }
         }
-        // Knob value readout — rendered via a temp data slot set by knob.rs.
-        // Anchored to the lit rect's bottom-right so it sits inside the
-        // dark inner area, not on the bezel frame.
+        // Knob value readout — rendered via a temp data slot set by
+        // knob.rs. Linger for ~500 ms after the last hover/drag so a quick
+        // tweak doesn't blink the value off the moment you release. The
+        // expiry timestamp travels alongside the text in ctx.data; we
+        // request another repaint at expiry time so the value disappears
+        // cleanly without needing further input to flush egui.
         let knob_text: Option<String> =
             ui.ctx().data(|d| d.get_temp(egui::Id::new("knob_display")));
-        if let Some(text) = knob_text {
-            let readout_rect = egui::Rect::from_min_size(
-                egui::pos2(lit.right() - 158.0, lit.bottom() - 16.0),
-                egui::vec2(156.0, 14.0),
-            );
-            crate::ui::seven_seg::draw_7seg_text(ui.painter(), readout_rect, &text);
+        let expires: Option<std::time::Instant> = ui
+            .ctx()
+            .data(|d| d.get_temp(egui::Id::new("knob_display_expires")));
+        if let (Some(text), Some(expires)) = (knob_text, expires) {
+            let now = std::time::Instant::now();
+            if now < expires {
+                ui.ctx().request_repaint_after(expires - now);
+                let readout_rect = egui::Rect::from_min_size(
+                    egui::pos2(lit.right() - 158.0, lit.bottom() - 16.0),
+                    egui::vec2(156.0, 14.0),
+                );
+                crate::ui::seven_seg::draw_7seg_text(ui.painter(), readout_rect, &text);
+            }
         }
 
         // Master knobs strip to the right of the display
@@ -2115,6 +2125,38 @@ pub fn draw_tempo_widget(
     ui.painter()
         .text(pos, egui::Align2::LEFT_TOP, &text, font.clone(), color);
 
+    // MIDI activity dot — sits to the right of the BPM number, brightens
+    // on every incoming MIDI event and decays back over ~200 ms (intensity
+    // is computed in editor.rs and stashed in ctx.data so we don't have
+    // to thread the counter through every panel call). Not interactive,
+    // not labelled — just a discreet pulse.
+    let intensity: f32 = ui
+        .ctx()
+        .data(|d| d.get_temp(egui::Id::new("niner_midi_activity")).unwrap_or(0.0_f32));
+    if intensity > 0.0 || seq.host_synced.load(std::sync::atomic::Ordering::Relaxed) {
+        // Always allocate the same rect so layout doesn't shift between
+        // host-synced and standalone modes — only the colour changes.
+        let _ = intensity;
+    }
+    {
+        let dot_centre = egui::pos2(pos.x + 56.0, pos.y + 6.0);
+        // Off colour matches RED_AMBIENT (the same dim red used for the
+        // GR meter housing); on colour is full RED_LED. Lerp gives us a
+        // smooth attack-and-decay glow.
+        let off = theme::RED_AMBIENT;
+        let on = theme::RED_LED;
+        let lerp_u8 = |a: u8, b: u8, t: f32| -> u8 {
+            let v = a as f32 + (b as f32 - a as f32) * t;
+            v.clamp(0.0, 255.0) as u8
+        };
+        let dot_color = egui::Color32::from_rgb(
+            lerp_u8(off.r(), on.r(), intensity),
+            lerp_u8(off.g(), on.g(), intensity),
+            lerp_u8(off.b(), on.b(), intensity),
+        );
+        ui.painter().circle_filled(dot_centre, 1.8, dot_color);
+    }
+
     // Underline when armed.
     if state.armed {
         let underline_y = pos.y + 11.0;
@@ -2136,6 +2178,20 @@ pub fn draw_tempo_widget(
 
     if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+
+    // Right-click on the BPM readout → MIDI Learn for the standalone
+    // tempo. The binding is keyed on `sentinel::TEMPO`, which the
+    // editor's apply path special-cases (skipping the normal
+    // `id_to_ptr` lookup). Bound only here in standalone mode — the
+    // host-synced branch returned early above, so this code can't
+    // reach a DAW project.
+    if let Some(learn) = crate::ui::widgets::fetch_midi_learn_ctx(ui.ctx()) {
+        crate::ui::widgets::attach_midi_learn_menu_for_target(
+            &response,
+            &learn,
+            crate::midi_map::sentinel::TEMPO,
+        );
     }
 
     // Double click → enter text entry.
@@ -2270,6 +2326,19 @@ pub fn draw_sequencer_row(
     );
     if play_resp.clicked() && !host_synced {
         seq.toggle_running();
+    }
+    // Right-click on the PLAY button → MIDI Learn for the sequencer
+    // play toggle. Bind any pad / footswitch / encoder click to start
+    // and stop the standalone sequencer remotely. No-op in host-synced
+    // mode (host owns transport).
+    if !host_synced {
+        if let Some(learn) = crate::ui::widgets::fetch_midi_learn_ctx(ui.ctx()) {
+            crate::ui::widgets::attach_midi_learn_menu_for_target(
+                &play_resp,
+                &learn,
+                crate::midi_map::sentinel::SEQ_PLAY,
+            );
+        }
     }
     let running = seq.is_running_effective();
     // Running = button shows pushed-in (latched) so the user sees sequencer

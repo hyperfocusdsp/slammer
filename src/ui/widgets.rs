@@ -4,9 +4,173 @@
 
 use nih_plug::prelude::*;
 use nih_plug_egui::egui;
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::sync::Arc;
 
+use crate::midi_map::{CcEncoding, MidiMapState, MidiSource, NoteBlockMap, OMNI};
 use crate::ui::knob;
 use crate::ui::theme;
+
+/// Shared state stashed in `egui::Context::data` so `param_knob` (and any
+/// other widget that wants MIDI Learn) can attach the right-click menu
+/// without threading 3 extra args through every call site.
+///
+/// The editor populates this once per frame from
+/// `params.midi_learn` + the editor-local `learn_armed` cell + a frozen
+/// `ptr_to_id` table built from `params.param_map()`. The widgets pull it
+/// out via `egui::Context::data(...)`.
+#[derive(Clone)]
+pub struct MidiLearnCtx {
+    /// Persisted bindings. Edited via "MIDI Learn" / "Forget" menu items.
+    pub state: Arc<Mutex<MidiMapState>>,
+    /// `Some(param_id)` while a knob is awaiting its first incoming MIDI
+    /// event. Cleared by the editor's drainer after one bind, or by the
+    /// user via "Cancel MIDI Learn".
+    pub armed: Arc<Mutex<Option<String>>>,
+    /// Reverse lookup: raw param-pointer (cast to `usize`) → param id
+    /// string from `#[id = "..."]`. Built once at editor start; never
+    /// mutated. Lets widgets identify their param without needing every
+    /// call site to pass an id string explicitly.
+    pub ptr_to_id: Arc<HashMap<usize, String>>,
+    /// Audio-thread `(channel, note) → blocked?` lookup. The widgets need
+    /// it so "Forget MIDI" can clear the block bit when a note binding
+    /// is removed — otherwise the kick would stay suppressed for that pad.
+    pub note_block_map: Arc<NoteBlockMap>,
+}
+
+const CTX_DATA_KEY: &str = "niner_midi_learn_ctx";
+
+/// Stash the shared `MidiLearnCtx` into `egui::Context::data` so widgets
+/// can attach a MIDI Learn menu without needing it threaded through every
+/// argument list. Call once per frame from the editor's update closure.
+pub fn install_midi_learn_ctx(ctx: &egui::Context, learn: MidiLearnCtx) {
+    ctx.data_mut(|d| {
+        d.insert_temp::<MidiLearnCtx>(egui::Id::new(CTX_DATA_KEY), learn);
+    });
+}
+
+fn midi_learn_ctx(ctx: &egui::Context) -> Option<MidiLearnCtx> {
+    ctx.data(|d| d.get_temp::<MidiLearnCtx>(egui::Id::new(CTX_DATA_KEY)))
+}
+
+/// Attach a "MIDI Learn / Forget MIDI" right-click menu to a knob's
+/// response, anchored at the param identified by `param_ptr` (raw
+/// `*const FloatParam as usize`). No-op if the editor hasn't published a
+/// MIDI Learn context this frame, or if the pointer isn't in the
+/// `ptr_to_id` table (e.g. an internal-only knob).
+fn attach_midi_learn_menu(response: &egui::Response, param_ptr: usize) {
+    let ctx = response.ctx.clone();
+    let Some(learn) = midi_learn_ctx(&ctx) else {
+        return;
+    };
+    let Some(param_id) = learn.ptr_to_id.get(&param_ptr).cloned() else {
+        return;
+    };
+    attach_midi_learn_menu_for_target(response, &learn, &param_id);
+}
+
+/// Shared body of the MIDI Learn right-click menu. Used directly by
+/// non-`Param` widgets (the BPM display, sequencer play button) that
+/// pass a sentinel string from [`crate::midi_map::sentinel`] in place
+/// of an actual param id.
+pub fn attach_midi_learn_menu_for_target(
+    response: &egui::Response,
+    learn: &MidiLearnCtx,
+    target_id: &str,
+) {
+    let current_binding = learn.state.lock().binding_for_param(target_id);
+    let armed_now = learn
+        .armed
+        .lock()
+        .as_deref()
+        .map(|s| s == target_id)
+        .unwrap_or(false);
+
+    response.context_menu(|ui| {
+        if let Some((ch, source, encoding)) = current_binding {
+            let ch_label = if ch == OMNI {
+                "OMNI".to_string()
+            } else {
+                format!("ch {}", ch + 1)
+            };
+            let enc_suffix = match encoding {
+                CcEncoding::Absolute => "",
+                CcEncoding::BinaryOffset => " (rel)",
+                CcEncoding::Centered => " (rel·c)",
+            };
+            let src_label = match source {
+                MidiSource::Cc(cc) => format!("CC {cc}{enc_suffix}"),
+                MidiSource::NoteOn(note) => format!("Note {note}"),
+            };
+            ui.label(format!("Mapped: {ch_label} · {src_label}"));
+            ui.separator();
+        }
+        if armed_now {
+            ui.label("⏳ waiting for MIDI…");
+            if ui.button("Cancel MIDI Learn").clicked() {
+                *learn.armed.lock() = None;
+                ui.close_menu();
+            }
+        } else if ui.button("MIDI Learn").clicked() {
+            *learn.armed.lock() = Some(target_id.to_string());
+            ui.close_menu();
+        }
+        // Manual encoding override for CC bindings, in case the
+        // bind-time auto-detect heuristic guessed wrong. The three
+        // options match `CcEncoding`. Notes are always absolute and
+        // get no picker.
+        if let Some((_, MidiSource::Cc(_), encoding)) = current_binding {
+            ui.separator();
+            let mut e = encoding;
+            ui.label("Encoding:");
+            if ui
+                .radio_value(&mut e, CcEncoding::Absolute, "Absolute (pot/fader)")
+                .changed()
+            {
+                learn.state.lock().set_encoding(target_id, e);
+            }
+            if ui
+                .radio_value(
+                    &mut e,
+                    CcEncoding::BinaryOffset,
+                    "Relative · binary offset (Arturia/BCR)",
+                )
+                .changed()
+            {
+                learn.state.lock().set_encoding(target_id, e);
+            }
+            if ui
+                .radio_value(
+                    &mut e,
+                    CcEncoding::Centered,
+                    "Relative · centred (Pioneer/X-Touch)",
+                )
+                .changed()
+            {
+                learn.state.lock().set_encoding(target_id, e);
+            }
+        }
+        if current_binding.is_some() && ui.button("Forget MIDI").clicked() {
+            // Drop the binding from the persisted state, then mirror
+            // that change into the audio-thread NoteBlockMap so the
+            // unblocked pad/key triggers the kick again.
+            let removed = learn.state.lock().forget(target_id);
+            if let Some((ch, MidiSource::NoteOn(note))) = removed {
+                learn.note_block_map.unblock(ch, note);
+            }
+            *learn.armed.lock() = None;
+            ui.close_menu();
+        }
+    });
+}
+
+/// Look up the shared `MidiLearnCtx` so widgets that don't go through
+/// `param_knob` (the BPM display, sequencer play button) can attach
+/// their own context menu using the public helper above.
+pub fn fetch_midi_learn_ctx(ctx: &egui::Context) -> Option<MidiLearnCtx> {
+    midi_learn_ctx(ctx)
+}
 
 /// Rack chrome: the left/right steel "ears" with ventilation slots.
 pub fn draw_rack_ear(painter: &egui::Painter, x: f32, y: f32, width: f32, height: f32) {
@@ -604,7 +768,7 @@ pub fn param_knob(
     core_color: egui::Color32,
 ) -> bool {
     let mut val = param.value();
-    let changed = knob::knob(
+    let knob_resp = knob::knob(
         ui,
         egui::Id::new(id),
         &mut val,
@@ -615,14 +779,17 @@ pub fn param_knob(
         format_value,
         diameter,
         core_color,
-    )
-    .changed;
-    if changed {
+    );
+    if knob_resp.changed {
         setter.begin_set_parameter(param);
         setter.set_parameter(param, val);
         setter.end_set_parameter(param);
     }
-    changed
+    if let Some(resp) = knob_resp.response.as_ref() {
+        let ptr = param as *const FloatParam as usize;
+        attach_midi_learn_menu(resp, ptr);
+    }
+    knob_resp.changed
 }
 
 /// Compact-layout variant of `param_knob` for dense clusters (e.g. the
@@ -649,7 +816,7 @@ pub fn param_knob_compact(
     core_color: egui::Color32,
 ) -> bool {
     let mut val = param.value();
-    let changed = knob::knob_compact(
+    let knob_resp = knob::knob_compact(
         ui,
         egui::Id::new(id),
         &mut val,
@@ -661,12 +828,15 @@ pub fn param_knob_compact(
         format_value,
         diameter,
         core_color,
-    )
-    .changed;
-    if changed {
+    );
+    if knob_resp.changed {
         setter.begin_set_parameter(param);
         setter.set_parameter(param, val);
         setter.end_set_parameter(param);
     }
-    changed
+    if let Some(resp) = knob_resp.response.as_ref() {
+        let ptr = param as *const FloatParam as usize;
+        attach_midi_learn_menu(resp, ptr);
+    }
+    knob_resp.changed
 }
