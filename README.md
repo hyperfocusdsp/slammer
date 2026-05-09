@@ -14,6 +14,11 @@ interactive standalone editor.
 
 ![Niner](docs/niner.webp)
 
+<p align="center">
+  <a href="https://hyperfocusdsp.com/plugins/niner/"><img src="https://img.shields.io/badge/Plugin_page-hyperfocusdsp.com-f59e0b?style=for-the-badge" alt="Niner on hyperfocusdsp.com" /></a>
+  <a href="https://hyperfocusdsp.com/docs/niner/"><img src="https://img.shields.io/badge/Docs-Read-2d3748?style=for-the-badge" alt="Niner documentation" /></a>
+</p>
+
 **Formats:** VST3, CLAP, Standalone
 **Platforms:** Linux, macOS (Apple Silicon + Intel), Windows
 **License:** GPL-3.0-or-later
