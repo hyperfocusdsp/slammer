@@ -24,6 +24,10 @@ use crate::ui::widgets::{
 };
 
 /// Return the bitmask describing which segments should light up for `ch`.
+/// Standard 7-seg approximations for letters that have a recognized
+/// single-cell form (HD44780-style); letters with no native rendering
+/// (M, V, W, K, X) are handled by `map_char_to_7seg` folding them to
+/// a visually-similar form before lookup.
 fn seg_mask(ch: char) -> u8 {
     match ch {
         '0' => 0b0111111,
@@ -39,17 +43,26 @@ fn seg_mask(ch: char) -> u8 {
         'A' => 0b1110111,
         'b' => 0b1111100,
         'C' => 0b0111001,
+        'c' => 0b1011000,
         'd' => 0b1011110,
         'E' => 0b1111001,
         'F' => 0b1110001,
+        'G' => 0b0111101,
+        'h' => 0b1110100,
         'H' => 0b1110110,
         'I' => 0b0110000,
+        'J' => 0b0011110,
         'L' => 0b0111000,
         'O' => 0b0111111,
         'P' => 0b1110011,
+        'q' => 0b1100111,
+        'r' => 0b1010000,
         'S' => 0b1101101,
         't' => 0b1111000,
         'U' => 0b0111110,
+        'u' => 0b0011100,
+        'y' => 0b1101110,
+        'Z' => 0b1011011,
         'i' => 0b0010000,
         'n' => 0b1010100,
         'o' => 0b1011100,
@@ -59,16 +72,54 @@ fn seg_mask(ch: char) -> u8 {
         '°' => 0b1100011,
         '%' => 0b1100011,
         '+' => 0b1110000,
+        '.' => 0b0000000,
         _ => 0b0000000,
     }
 }
 
 /// Map arbitrary input text characters to 7-seg-compatible forms.
-/// Uppercase D/T → lowercase d/t to get correct renderable glyphs.
+///
+/// Two folds happen here:
+///   1. Uppercase letters with no clean uppercase 7-seg rendering get
+///      folded to their lowercase form (which IS renderable via
+///      `seg_mask` — e.g. uppercase R has no clean 7-seg shape, but
+///      lowercase r reads cleanly as `e + g`).
+///   2. Letters with no native 7-seg rendering at all (M, W, V, X, K)
+///      get a best-approximation fallback to a visually-similar shape.
+///      This trades pixel-perfect rendering for "user can read the
+///      label" — the previous behaviour silently dropped these chars
+///      to blank, which read as truncation.
 fn map_char_to_7seg(ch: char) -> char {
     match ch {
+        // --- Uppercase folds: letters whose lowercase forms render
+        // better on 7-seg (b/d/n/r/t already in the lowercase table). ---
+        'B' => 'b',
         'D' => 'd',
+        'N' => 'n',
+        'Q' => 'q',
+        'R' => 'r',
         'T' => 't',
+        'Y' => 'y',
+
+        // --- Lowercase folds: letters whose uppercase forms render and
+        // lowercase has no distinct 7-seg shape (or matches uppercase). ---
+        'a' => 'A',
+        'e' => 'E',
+        'g' => 'G',
+        'j' => 'J',
+        'l' => 'L',
+        'p' => 'P',
+        's' => 'S',
+        'z' => 'Z',
+
+        // --- Best-approximation fallbacks for letters with no native
+        // 7-seg form (both cases). Imperfect but never silently drops. ---
+        'M' | 'm' => 'n',
+        'V' | 'v' => 'u',
+        'W' | 'w' => 'u',
+        'X' | 'x' => 'h',
+        'K' | 'k' => 'h',
+
         _ => ch,
     }
 }

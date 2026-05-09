@@ -9,9 +9,9 @@
   },
   "entries": {
     "header.niner_logo": {
-      "pos_offset_x": 15.0,
-      "pos_offset_y": 0.5,
-      "size_scale": 1.6131225,
+      "pos_offset_x": 0.0,
+      "pos_offset_y": 0.0,
+      "size_scale": 1.0,
       "font_scale": 1.0
     },
     "footer.hyperfocus_logo": {

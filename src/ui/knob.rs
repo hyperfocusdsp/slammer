@@ -278,7 +278,14 @@ fn knob_inner(
             let start_angle = std::f32::consts::PI * 0.75;
             let sweep_range = std::f32::consts::PI * 1.5;
             let dot_center_r = radius + 2.5;
-            let dot_radius = 0.75;
+            // Tick-dot radius scales sub-linearly with knob radius so small
+            // knobs don't carry visually-heavier dots than large knobs.
+            // At radius=16 (large knob, KNOB_SIZE/2) → ≈ 0.75 (unchanged).
+            // At radius=9  (small knob)             → ≈ 0.56.
+            // Floor at 0.45 keeps dots visible on any future smaller knob.
+            // sqrt() scaling keeps perceived visual weight (∝ area ∝ r²)
+            // roughly constant across knob sizes.
+            let dot_radius = (0.75 * (radius / 16.0).sqrt()).max(0.45);
             let indicator_outer_r = radius;
             let stem_w = 2.0;
             let half_w = stem_w * 0.5;

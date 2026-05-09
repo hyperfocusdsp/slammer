@@ -21,7 +21,10 @@ pub const RED_WAVEFORM: egui::Color32 =
     egui::Color32::from_rgba_premultiplied(0x40, 0x06, 0x05, 0x40);
 
 // Text
-pub const WHITE: egui::Color32 = egui::Color32::from_rgb(0xdd, 0xdd, 0xdd);
+// Brand bone — sampled from `assets/hyperfocus_dsp_logo.png` (#F4F1EA).
+// Used everywhere we'd previously use plain "white" for foreground content,
+// so all UI text/highlights pick up the same cream as the wordmark.
+pub const WHITE: egui::Color32 = egui::Color32::from_rgb(0xf4, 0xf1, 0xea);
 pub const TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(0x55, 0x55, 0x55);
 pub const TEXT_GHOST: egui::Color32 =
     egui::Color32::from_rgba_premultiplied(0x12, 0x12, 0x12, 0x12);
@@ -34,7 +37,7 @@ pub const KNOB_METAL_HIGHLIGHT: egui::Color32 = egui::Color32::from_rgb(0xaa, 0x
 pub const KNOB_BEVEL: egui::Color32 = egui::Color32::from_rgb(0x66, 0x66, 0x66);
 pub const KNOB_RECESS: egui::Color32 =
     egui::Color32::from_rgba_premultiplied(0x00, 0x00, 0x00, 0x59);
-pub const KNOB_INDICATOR: egui::Color32 = egui::Color32::from_rgb(0xee, 0xee, 0xee);
+pub const KNOB_INDICATOR: egui::Color32 = egui::Color32::from_rgb(0xf4, 0xf1, 0xea);
 pub const KNOB_DIMPLE: egui::Color32 =
     egui::Color32::from_rgba_premultiplied(0x00, 0x00, 0x00, 0x26);
 

@@ -267,17 +267,22 @@ pub fn draw_hex_screw(painter: &egui::Painter, cx: f32, cy: f32, radius: f32, ro
         egui::Color32::from_rgb(0x0c, 0x0c, 0x0e),
         egui::Stroke::NONE,
     ));
-    // Very subtle inner-wall highlight on upper-left face.
-    let hi_a = rotation + TAU * (4.0 / 6.0);
-    let hi_pts = vec![
-        center + egui::vec2(hi_a.cos(), hi_a.sin()) * socket_r,
-        center + egui::vec2((hi_a + TAU / 6.0).cos(), (hi_a + TAU / 6.0).sin()) * socket_r,
-        center + egui::vec2((hi_a + TAU / 6.0).cos(), (hi_a + TAU / 6.0).sin()) * socket_r * 0.76,
-        center + egui::vec2(hi_a.cos(), hi_a.sin()) * socket_r * 0.76,
+    // Soft shadow on upper-left inner wall. The chassis surface above
+    // the recess blocks direct light, so this hex face sits in shadow.
+    // Matches the upper-left light-from-above convention used by the
+    // knobs and the cap body (the cap-top brightening above lights the
+    // OUTER convex top from upper-left; the recess INTERIOR receives
+    // the inverse — shadow on the wall facing the light source).
+    let sh_a = rotation + TAU * (4.0 / 6.0);
+    let sh_pts = vec![
+        center + egui::vec2(sh_a.cos(), sh_a.sin()) * socket_r,
+        center + egui::vec2((sh_a + TAU / 6.0).cos(), (sh_a + TAU / 6.0).sin()) * socket_r,
+        center + egui::vec2((sh_a + TAU / 6.0).cos(), (sh_a + TAU / 6.0).sin()) * socket_r * 0.76,
+        center + egui::vec2(sh_a.cos(), sh_a.sin()) * socket_r * 0.76,
     ];
     painter.add(egui::Shape::convex_polygon(
-        hi_pts,
-        egui::Color32::from_rgba_premultiplied(0xff, 0xff, 0xff, 0x08),
+        sh_pts,
+        egui::Color32::from_rgba_premultiplied(0x00, 0x00, 0x00, 0x40),
         egui::Stroke::NONE,
     ));
 

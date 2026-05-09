@@ -260,7 +260,7 @@ pub fn test_button(ui: &mut egui::Ui, panel_rect: egui::Rect, header_center_y: f
             btn_rect.center() + egui::vec2(0.0, text_offset),
             egui::Align2::CENTER_CENTER,
             "TEST",
-            egui::FontId::new(10.8, egui::FontFamily::Monospace),
+            egui::FontId::new(10.0, egui::FontFamily::Monospace),
             theme::WHITE,
         );
     }
@@ -956,7 +956,7 @@ pub fn draw_sub_top_row(
                 ui,
                 setter,
                 "t_bw",
-                "BW",
+                "bandwidth",
                 &params.top_bw,
                 0.2,
                 3.0,
@@ -1953,7 +1953,7 @@ pub fn draw_dice_row(
             btn_rect.center() + egui::vec2(0.0, text_offset),
             egui::Align2::CENTER_CENTER,
             "DICE",
-            egui::FontId::new(8.0, egui::FontFamily::Monospace),
+            egui::FontId::new(10.0, egui::FontFamily::Monospace),
             theme::WHITE,
         );
     }

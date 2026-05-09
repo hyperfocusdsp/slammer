@@ -182,6 +182,8 @@ pub fn create(
 
     // Header logo texture, lazily uploaded on first paint.
     let logo_texture: Arc<Mutex<Option<egui::TextureHandle>>> = Arc::new(Mutex::new(None));
+    // Header "9" model-badge texture, drawn left of the wordmark.
+    let nine_badge_texture: Arc<Mutex<Option<egui::TextureHandle>>> = Arc::new(Mutex::new(None));
     // Footer "manufacturer mark" (Hyperfocus DSP wordmark) — same lazy
     // upload pattern as the header logo, separate handle so each can be
     // sized independently if needed.
@@ -301,6 +303,7 @@ pub fn create(
                 if cached.as_ref() != Some(ctx) {
                     *cached = Some(ctx.clone());
                     *logo_texture.lock() = None;
+                    *nine_badge_texture.lock() = None;
                     *hf_logo_texture.lock() = None;
                     *chassis_texture.lock() = None;
                     *screws_texture.lock() = None;
@@ -686,7 +689,68 @@ pub fn create(
                         screws_texture.lock().as_ref(),
                     );
 
-                    // Header logo (lazy texture upload, then painter::image).
+                    // Header lockup: "9" model-badge + NINER wordmark.
+                    // Both lazy-uploaded textures, drawn as separate elements
+                    // so each can be tuned independently in the layout editor
+                    // (`header.niner_9` and `header.niner_logo`). Aspect
+                    // ratios are sourced from the trimmed PNGs in
+                    // `assets/niner_9.png` and `assets/niner_logo.png` —
+                    // re-run `rsvg-convert | magick -trim` and update these
+                    // ratios when the wordmark/badge SVGs change.
+                    let lockup_h = 20.0;
+                    let nine_w = lockup_h * (64.0 / 80.0); // ~16.0 px
+                    let wordmark_w = lockup_h * (342.0 / 80.0); // ~85.5 px
+                    let lockup_gap = 5.0;
+
+                    // "9" badge — sits at CONTENT_LEFT, left of the wordmark.
+                    {
+                        let mut tex = nine_badge_texture.lock();
+                        if tex.is_none() {
+                            let bytes = include_bytes!("../../assets/niner_9.png");
+                            if let Ok(img) = image::load_from_memory(bytes) {
+                                let rgba = img.to_rgba8();
+                                let (w, h) = rgba.dimensions();
+                                let pixels = rgba.into_raw();
+                                let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                    [w as usize, h as usize],
+                                    &pixels,
+                                );
+                                *tex = Some(ctx.load_texture(
+                                    "niner_9",
+                                    color_image,
+                                    egui::TextureOptions::LINEAR,
+                                ));
+                            }
+                        }
+                        if let Some(t) = tex.as_ref() {
+                            let base_rect = egui::Rect::from_min_size(
+                                egui::pos2(
+                                    panel_rect.left() + CONTENT_LEFT,
+                                    header_center_y - lockup_h * 0.5,
+                                ),
+                                egui::vec2(nine_w, lockup_h),
+                            );
+                            let rect = crate::ui::layout_overrides::instrument(
+                                ui,
+                                "header.niner_9",
+                                base_rect,
+                            );
+                            ui.painter().image(
+                                t.id(),
+                                rect,
+                                egui::Rect::from_min_max(
+                                    egui::pos2(0.0, 0.0),
+                                    egui::pos2(1.0, 1.0),
+                                ),
+                                // Identity tint — render the PNG's actual
+                                // oxide red, don't multiply by `theme::WHITE`
+                                // (which is now brand bone, not pure white).
+                                egui::Color32::WHITE,
+                            );
+                        }
+                    }
+
+                    // NINER wordmark — sits to the right of the "9" badge.
                     {
                         let mut tex = logo_texture.lock();
                         if tex.is_none() {
@@ -707,21 +771,12 @@ pub fn create(
                             }
                         }
                         if let Some(t) = tex.as_ref() {
-                            let logo_h = 18.0;
-                            let logo_w = logo_h * (480.0 / 84.0);
-                            // The PNG has ~26.25% transparent padding on its
-                            // left side before the actual "NINER" glyphs.
-                            // Shift the rect left so the visible text edge,
-                            // not the PNG edge, lines up with CONTENT_LEFT
-                            // (the same x as the display bezel and the
-                            // SUB / MID / TOP labels below).
-                            let glyph_left_pad = logo_w * (126.0 / 480.0);
                             let base_logo_rect = egui::Rect::from_min_size(
                                 egui::pos2(
-                                    panel_rect.left() + CONTENT_LEFT - glyph_left_pad,
-                                    header_center_y - logo_h * 0.5,
+                                    panel_rect.left() + CONTENT_LEFT + nine_w + lockup_gap,
+                                    header_center_y - lockup_h * 0.5,
                                 ),
-                                egui::vec2(logo_w, logo_h),
+                                egui::vec2(wordmark_w, lockup_h),
                             );
                             let logo_rect = crate::ui::layout_overrides::instrument(
                                 ui,
@@ -735,7 +790,9 @@ pub fn create(
                                     egui::pos2(0.0, 0.0),
                                     egui::pos2(1.0, 1.0),
                                 ),
-                                theme::WHITE,
+                                // Identity tint — render the PNG's actual
+                                // bone, don't multiply by `theme::WHITE`.
+                                egui::Color32::WHITE,
                             );
                         }
                     }
@@ -905,6 +962,12 @@ pub fn create(
                         // so consumed events don't fire prev/next or
                         // BPM ±10. No-op when selection is empty.
                         crate::ui::layout_overrides::handle_arrow_nudge(ctx, typing);
+
+                        // Ctrl+Z / Ctrl+Y (also Ctrl+Shift+Z) for layout
+                        // undo/redo. Internally gated on is_editor_on so
+                        // the keys remain free for plugin shortcuts when
+                        // the editor is off.
+                        crate::ui::layout_overrides::handle_undo_redo(ctx, typing);
                     }
 
                     // ===== Header preset bar =====
@@ -1197,7 +1260,10 @@ pub fn create(
                                     egui::pos2(0.0, 0.0),
                                     egui::pos2(1.0, 1.0),
                                 ),
-                                theme::WHITE,
+                                // Identity tint — render the HF wordmark at
+                                // its true bone color (its source PNG is
+                                // already brand bone), don't double-tint.
+                                egui::Color32::WHITE,
                             );
                             let logo_resp = ui.interact(
                                 logo_rect,

@@ -125,7 +125,7 @@ impl Default for OverrideEntry {
 }
 
 /// Full snapshot — bulk + per-element entries. Persisted as JSON.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct LayoutOverrides {
     pub bulk: BulkOverrides,
     #[serde(default)]
@@ -138,6 +138,135 @@ const DATA_KEY: &str = "niner_layout_overrides";
 const REGISTRY_KEY: &str = "niner_layout_registry";
 #[cfg(feature = "layout_editor")]
 const SELECTION_KEY: &str = "niner_layout_selection";
+
+// ---------------------------------------------------------------------------
+// Undo / redo
+// ---------------------------------------------------------------------------
+//
+// Process-global undo stack for layout edits. Captured snapshots are pushed
+// only when the pointer is up — that coalesces a continuous drag (which
+// fires write_snapshot every pixel of motion) into a single undo entry per
+// drag gesture instead of one per frame. Arrow-key nudges, button clicks
+// and right-click resets all happen with the pointer up, so they get their
+// own entries naturally.
+#[cfg(feature = "layout_editor")]
+const MAX_UNDO_DEPTH: usize = 64;
+
+#[cfg(feature = "layout_editor")]
+struct UndoState {
+    undo: Vec<LayoutOverrides>,
+    redo: Vec<LayoutOverrides>,
+    /// The last snapshot we considered "settled" (committed to the undo
+    /// stack). Used to detect change between settled states.
+    last_committed: Option<LayoutOverrides>,
+}
+
+#[cfg(feature = "layout_editor")]
+static UNDO_STATE: std::sync::Mutex<UndoState> = std::sync::Mutex::new(UndoState {
+    undo: Vec::new(),
+    redo: Vec::new(),
+    last_committed: None,
+});
+
+#[cfg(feature = "layout_editor")]
+fn maybe_commit_undo_point(ctx: &egui::Context, current: &LayoutOverrides) {
+    // Don't capture mid-drag: wait until the user releases the pointer so
+    // a single drag becomes a single undo entry.
+    let pointer_down = ctx.input(|i| i.pointer.any_down());
+    if pointer_down {
+        return;
+    }
+    let mut state = UNDO_STATE.lock().expect("UNDO_STATE poisoned");
+    let needs_commit = match &state.last_committed {
+        None => true,
+        Some(prev) => prev != current,
+    };
+    if !needs_commit {
+        return;
+    }
+    if let Some(prev) = state.last_committed.take() {
+        state.undo.push(prev);
+        if state.undo.len() > MAX_UNDO_DEPTH {
+            state.undo.remove(0);
+        }
+        // A new committed change invalidates any pending redo.
+        state.redo.clear();
+    }
+    state.last_committed = Some(current.clone());
+}
+
+#[cfg(feature = "layout_editor")]
+fn try_undo(ctx: &egui::Context) -> bool {
+    let mut state = UNDO_STATE.lock().expect("UNDO_STATE poisoned");
+    let Some(prev) = state.undo.pop() else {
+        return false;
+    };
+    if let Some(current) = state.last_committed.take() {
+        state.redo.push(current);
+        if state.redo.len() > MAX_UNDO_DEPTH {
+            state.redo.remove(0);
+        }
+    }
+    state.last_committed = Some(prev.clone());
+    drop(state);
+    write_snapshot(ctx, prev);
+    ctx.request_repaint();
+    true
+}
+
+#[cfg(feature = "layout_editor")]
+fn try_redo(ctx: &egui::Context) -> bool {
+    let mut state = UNDO_STATE.lock().expect("UNDO_STATE poisoned");
+    let Some(next) = state.redo.pop() else {
+        return false;
+    };
+    if let Some(current) = state.last_committed.take() {
+        state.undo.push(current);
+        if state.undo.len() > MAX_UNDO_DEPTH {
+            state.undo.remove(0);
+        }
+    }
+    state.last_committed = Some(next.clone());
+    drop(state);
+    write_snapshot(ctx, next);
+    ctx.request_repaint();
+    true
+}
+
+#[cfg(feature = "layout_editor")]
+fn undo_redo_depths() -> (usize, usize) {
+    let s = UNDO_STATE.lock().expect("UNDO_STATE poisoned");
+    (s.undo.len(), s.redo.len())
+}
+
+/// Ctrl+Z / Ctrl+Y handler. Goes through the character-key path because
+/// egui-baseview doesn't translate F-keys (same gotcha as Alt+L). Ctrl+Y
+/// AND Ctrl+Shift+Z both redo, matching VS Code / Photoshop conventions.
+/// Ignored when a TextEdit owns the keyboard.
+#[cfg(feature = "layout_editor")]
+pub fn handle_undo_redo(ctx: &egui::Context, typing: bool) {
+    if typing || !is_editor_on() {
+        return;
+    }
+    let (undo_pressed, redo_pressed) = ctx.input(|i| {
+        let z = i.key_pressed(egui::Key::Z);
+        let y = i.key_pressed(egui::Key::Y);
+        let ctrl_or_cmd = i.modifiers.ctrl || i.modifiers.command;
+        let shift = i.modifiers.shift;
+        let undo = z && ctrl_or_cmd && !shift;
+        let redo = (y && ctrl_or_cmd) || (z && ctrl_or_cmd && shift);
+        (undo, redo)
+    });
+    if undo_pressed {
+        if try_undo(ctx) {
+            nih_plug::nih_log!("[layout_editor] undo");
+        }
+    } else if redo_pressed {
+        if try_redo(ctx) {
+            nih_plug::nih_log!("[layout_editor] redo");
+        }
+    }
+}
 
 /// Per-frame keyset of every instrumented element. Cleared at the start
 /// of each frame (lazy — when the editor panel renders) so the panel's
@@ -916,6 +1045,10 @@ pub fn render_panel(ctx: &egui::Context) {
         return;
     }
     let mut snap_state = snapshot(ctx);
+    // Capture an undo point each frame the layout has settled into a new
+    // state (pointer up, snap_state different from last commit). Coalesces
+    // drags and lets arrow-nudges / button clicks register naturally.
+    maybe_commit_undo_point(ctx, &snap_state);
     let mut dirty = false;
     let mut clear_key: Option<String> = None;
     let registered = registry_keys(ctx);
@@ -936,7 +1069,8 @@ pub fn render_panel(ctx: &egui::Context) {
                     "Drag = move. Click = select. Shift+click = multi-select. \
                      Arrow keys = nudge 1px (Shift+arrow = 10px). \
                      Esc = clear selection. Right-click = reset. \
-                     Hold Shift while dragging = bypass snap, Ctrl = ×4 grid.",
+                     Hold Shift while dragging = bypass snap, Ctrl = ×4 grid. \
+                     Ctrl+Z = undo, Ctrl+Y / Ctrl+Shift+Z = redo.",
                 )
                 .small()
                 .color(egui::Color32::GRAY),
@@ -1081,6 +1215,7 @@ pub fn render_panel(ctx: &egui::Context) {
             );
 
             ui.separator();
+            let (undo_depth, redo_depth) = undo_redo_depths();
             ui.horizontal(|ui| {
                 if ui.button("Save layout").clicked() {
                     match save_to_disk(&snap_state) {
@@ -1097,6 +1232,20 @@ pub fn render_panel(ctx: &egui::Context) {
                 if ui.button("Reset all").clicked() {
                     snap_state = LayoutOverrides::default();
                     dirty = true;
+                }
+                let undo_btn = ui.add_enabled(
+                    undo_depth > 0,
+                    egui::Button::new(format!("Undo ({})", undo_depth)),
+                );
+                if undo_btn.clicked() {
+                    try_undo(ctx);
+                }
+                let redo_btn = ui.add_enabled(
+                    redo_depth > 0,
+                    egui::Button::new(format!("Redo ({})", redo_depth)),
+                );
+                if redo_btn.clicked() {
+                    try_redo(ctx);
                 }
             });
 
