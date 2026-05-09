@@ -2,6 +2,76 @@
 
 All notable changes to Niner (formerly Slammer) are documented here.
 
+## [0.7.6] — 2026-05-10
+
+### Added
+
+- **In-plugin MIDI Learn.** Right-click any knob, the BPM display, or the
+  PLAY button to bind a MIDI CC or NoteOn. Bindings persist across DAW
+  project save/load and standalone session restarts. Three CC encodings
+  auto-detected at bind time (Absolute / BinaryOffset / Centered) with a
+  manual override picker on the right-click menu for edge cases. Also
+  works on the master volume and DJ filter knobs (which previously
+  bypassed the auto-attach helper).
+- **Sample-accurate MIDI NoteOn dispatch.** Events now schedule via the
+  engine's pending-hit ring at their real frame offset within the
+  buffer. Under JACK and DAW hosts that means the tightness of your
+  controller's wire-level timing survives all the way to audio output;
+  under the cpal/midir standalone backend the offset is hardcoded to 0
+  upstream so behaviour is unchanged from before.
+- **Reworked `niner-launch` shim.** Defaults to `--backend alsa` with
+  auto-detected BeatStep MIDI subscription via `aconnect`, plus
+  `--sample-rate` and `--period-size` pulled live from `pw-metadata` to
+  match PipeWire's `clock.force-rate` / `clock.force-quantum` (a
+  smaller period than the server quantum bitcrushes the bridge output;
+  rate mismatches cause underrun spam). JACK backend is opt-in via
+  `NINER_FORCE_BACKEND=jack`, with a `pw-link` sidecar that wires the
+  controller to `niner:midi_input` after registration (sidesteps the
+  colon-in-port-name issue with nih-plug's `--connect-jack-midi-input`).
+- **Header lockup with a separate "9" model badge** rendered next to
+  the wordmark.
+- **Multisize app-icon set** (`assets/icon/`, 16 px – 1024 px PNGs +
+  `niner.ico`) and SVG source pipeline (`assets/source/`).
+- **Layout editor undo/redo** (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z) with
+  64-depth coalesced stacks.
+
+### Changed
+
+- Theme `WHITE` and the knob indicator switched to bone-cream `#f4f1ea`,
+  sampled from the Hyperfocus DSP brand palette.
+- Hex screws now shadow upper-left to match the convex-cap
+  light-from-above convention applied elsewhere in the chassis.
+- Knob tick-dots scale sublinearly (large 0.75 → small 0.45 floor) so
+  small knobs read cleaner.
+- Seven-segment display table expanded by 22 glyphs (lowercase
+  c/h/J/q/r/u/y/Z, uppercase folds B/N/Q/R/Y, `.` blanks the segment,
+  M/W/V/X/K fall back to near-equivalent forms instead of dropping out).
+- Panel labels: "BW" → "bandwidth"; TEST and DICE button font sizes
+  rebalanced.
+
+### Fixed
+
+- **Smoothed knobs no longer fight your finger during a drag.** Master
+  decay, master volume, DJ filter, and the comp macros all carry
+  parameter smoothers (Linear or Logarithmic, 5–20 ms). The GUI was
+  reading `param.value()` (the smoothed mid-ramp state) for knob
+  position, which lurched the indicator backwards toward the smoother
+  while you were dragging. Switched to
+  `param.unmodulated_plain_value()` so the knob tracks the user-set
+  target.
+- **Right-click MIDI Learn menu** now appears on master volume and DJ
+  filter, which bypass `param_knob` for custom dB / HP–LP display
+  formatting and previously had no menu attached.
+
+### Known limitations
+
+- The opt-in JACK backend may register a client without `process()`
+  callbacks ever firing on some PipeWire configurations. ALSA mode is
+  unaffected and remains the default.
+- A BeatStep absolute pot whose first capture lands on raw 1, 63, 65,
+  or 127 may mis-classify as a relative encoder; fix via the
+  right-click Encoding picker on that knob.
+
 ## [0.7.5] — 2026-05-05
 
 ### Added

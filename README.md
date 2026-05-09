@@ -210,6 +210,11 @@ SUB + MID + TOP voices  (+ parallel CLAP voice)
   limiter. GR meter sits next to it.
 - **Test trigger** — press `T` anywhere in the editor to fire a kick
   without MIDI.
+- **In-plugin MIDI Learn** — right-click any knob, the BPM, or the PLAY
+  button to bind a MIDI CC or NoteOn. Three relative-encoder encodings
+  auto-detected (Absolute, BinaryOffset, Centered) with a manual
+  override picker. Bindings persist across DAW projects and standalone
+  sessions.
 - **BOUNCE button** — one click renders a single hit, opens a native
   save dialog (remembered between bounces), writes WAV or AIFF.
 
