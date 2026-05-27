@@ -36,9 +36,13 @@ name = "niner-standalone"
 path = "src/main.rs"
 
 [dependencies]
-# Plugin framework — pinned to a specific commit for reproducible builds
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug", rev = "28b149ec4d62757d0b448809148a0c3ca6e09a95", features = ["assert_process_allocs", "standalone"] }
-nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug", rev = "28b149ec4d62757d0b448809148a0c3ca6e09a95" }
+# Plugin framework — pinned to a specific commit for reproducible builds.
+# Hornfisk/nih-plug tracks upstream robbert-vdh@28b149e plus a single-line
+# change exposing `EguiState::set_requested_size` (private upstream) so the
+# UI-scale control can drive a programmatic window resize in-DAW. See
+# https://github.com/Hornfisk/nih-plug/tree/niner/pub-set-requested-size
+nih_plug = { git = "https://github.com/Hornfisk/nih-plug", rev = "8b51e93a707cb6226721b56825047322e8a8e623", features = ["assert_process_allocs", "standalone"] }
+nih_plug_egui = { git = "https://github.com/Hornfisk/nih-plug", rev = "8b51e93a707cb6226721b56825047322e8a8e623" }
 
 # Real-time safety
 rtrb = "0.3"

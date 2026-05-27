@@ -2033,7 +2033,7 @@ dependencies = [
 [[package]]
 name = "nih_plug"
 version = "0.0.0"
-source = "git+https://github.com/robbert-vdh/nih-plug?rev=28b149ec4d62757d0b448809148a0c3ca6e09a95#28b149ec4d62757d0b448809148a0c3ca6e09a95"
+source = "git+https://github.com/Hornfisk/nih-plug?rev=8b51e93a707cb6226721b56825047322e8a8e623#8b51e93a707cb6226721b56825047322e8a8e623"
 dependencies = [
  "anyhow",
  "anymap3",
@@ -2070,7 +2070,7 @@ dependencies = [
 [[package]]
 name = "nih_plug_derive"
 version = "0.1.0"
-source = "git+https://github.com/robbert-vdh/nih-plug?rev=28b149ec4d62757d0b448809148a0c3ca6e09a95#28b149ec4d62757d0b448809148a0c3ca6e09a95"
+source = "git+https://github.com/Hornfisk/nih-plug?rev=8b51e93a707cb6226721b56825047322e8a8e623#8b51e93a707cb6226721b56825047322e8a8e623"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2080,7 +2080,7 @@ dependencies = [
 [[package]]
 name = "nih_plug_egui"
 version = "0.0.0"
-source = "git+https://github.com/robbert-vdh/nih-plug?rev=28b149ec4d62757d0b448809148a0c3ca6e09a95#28b149ec4d62757d0b448809148a0c3ca6e09a95"
+source = "git+https://github.com/Hornfisk/nih-plug?rev=8b51e93a707cb6226721b56825047322e8a8e623#8b51e93a707cb6226721b56825047322e8a8e623"
 dependencies = [
  "baseview",
  "crossbeam",
