@@ -2,9 +2,10 @@
 # niner-launch — desktop-launcher shim for the standalone.
 #
 # What it does:
-#   1. Reads the persisted UI scale from `$XDG_DATA_HOME/niner/ui_scale.txt`
-#      (the in-GUI scale badge writes it; the standalone only honours the
-#      `--dpi-scale` CLI flag) and forwards it.
+#   1. Pins baseview's native scale to 1.0 (`--dpi-scale 1.0`). The plugin
+#      drives UI scaling itself (egui zoom factor + a matching window resize),
+#      reading the saved factor from `$XDG_DATA_HOME/niner/ui_scale.txt` at
+#      startup. The launcher must NOT also scale or the two would compound.
 #   2. Picks an audio backend, sets up MIDI auto-routing, and execs
 #      niner-standalone. Default is `--backend alsa` because:
 #        * PipeWire's ALSA bridge auto-routes niner's audio to the default
@@ -45,9 +46,6 @@
 set -u
 
 BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCALE_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/niner/ui_scale.txt"
-SCALE=$(tr -d ' \n' < "$SCALE_FILE" 2>/dev/null || true)
-SCALE="${SCALE:-1.0}"
 
 STANDALONE="$BIN_DIR/niner-standalone"
 WRAPPER="$BIN_DIR/nih-standalone-wrapper"
@@ -106,9 +104,9 @@ if [ "${NINER_FORCE_BACKEND:-alsa}" != "jack" ] && command -v aconnect >/dev/nul
     PERIOD="${NINER_PERIOD_SIZE:-${PW_QUANTUM:-512}}"
     ALSA_ARGS=(--backend alsa --midi-input "$MIDI_INPUT" --sample-rate "$PW_RATE" --period-size "$PERIOD")
     if [ -x "$WRAPPER" ]; then
-      exec "$WRAPPER" "$STANDALONE" --dpi-scale "$SCALE" "${ALSA_ARGS[@]}" "$@"
+      exec "$WRAPPER" "$STANDALONE" --dpi-scale 1.0 "${ALSA_ARGS[@]}" "$@"
     fi
-    exec "$STANDALONE" --dpi-scale "$SCALE" "${ALSA_ARGS[@]}" "$@"
+    exec "$STANDALONE" --dpi-scale 1.0 "${ALSA_ARGS[@]}" "$@"
   fi
   # No BeatStep found — fall through to JACK below (works without MIDI).
 fi
@@ -139,6 +137,6 @@ if command -v pw-link >/dev/null 2>&1; then
 fi
 
 if [ -x "$WRAPPER" ]; then
-  exec "$WRAPPER" "$STANDALONE" --dpi-scale "$SCALE" --backend jack "$@"
+  exec "$WRAPPER" "$STANDALONE" --dpi-scale 1.0 --backend jack "$@"
 fi
-exec "$STANDALONE" --dpi-scale "$SCALE" --backend jack "$@"
+exec "$STANDALONE" --dpi-scale 1.0 --backend jack "$@"

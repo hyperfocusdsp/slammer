@@ -282,12 +282,32 @@ pub fn create(
             crate::ui::layout_overrides::init(ctx);
         },
         move |ctx, setter, _state| {
-            // Scaling is handled outside this callback: baseview applies the
-            // window scale factor (standalone via `--dpi-scale`, DAW via
-            // `Editor::set_scale_factor`), and egui's `pixels_per_point`
-            // follows. We do NOT call `ctx.set_pixels_per_point()` here —
-            // that fights baseview and double-scales the layout.
-            let _ = &editor_state_clone;
+            // UI scale (1.0 / 1.5 / 2.0). We drive both egui's content zoom
+            // and a matching programmatic window resize from a single value,
+            // so the scale badge works identically in a DAW and standalone.
+            //
+            // Baseview's native scale is pinned to 1.0 (DAW hosts default to
+            // it; the standalone launcher passes `--dpi-scale 1.0`), so the
+            // effective pixels-per-point is exactly `scale`: the host window
+            // grows to BASE × scale physical pixels while the layout keeps
+            // drawing into a fixed BASE logical space. Uniform scale, no
+            // reflow — knob rows never move relative to each other.
+            //
+            // `set_zoom_factor` is cheap and idempotent per frame; the resize
+            // request only fires when the stored size actually differs, so a
+            // settled scale costs one comparison.
+            {
+                let scale = (*params.ui_scale.lock()).clamp(1.0, 2.0);
+                ctx.set_zoom_factor(scale);
+                let (bw, bh) = crate::params::BASE_WINDOW_SIZE;
+                let want = (
+                    (bw as f32 * scale).round() as u32,
+                    (bh as f32 * scale).round() as u32,
+                );
+                if editor_state_clone.size() != want {
+                    editor_state_clone.set_requested_size(want);
+                }
+            }
 
             // Invalidate texture caches when the egui::Context changes. The
             // `Arc<Mutex<Option<TextureHandle>>>`s captured above outlive any
@@ -1059,10 +1079,7 @@ pub fn create(
                             let ui_resp = ui
                                 .interact(hit, egui::Id::new("ui_scale_btn"), egui::Sense::click())
                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text(
-                                    "UI scale — click to cycle (1x / 1.5x / 2x).\n\
-                                     Reopen the plugin to apply.",
-                                );
+                                .on_hover_text("UI scale — click to cycle (1x / 1.5x / 2x).");
                             let color = if ui_resp.hovered() {
                                 theme::WHITE
                             } else {
@@ -1084,9 +1101,7 @@ pub fn create(
                                 };
                                 *lock = next;
                                 crate::util::paths::save_ui_scale(next);
-                                tracing::info!(
-                                    "[ui_scale] cycled → {next}x (saved; reopen plugin to apply)"
-                                );
+                                tracing::info!("[ui_scale] cycled → {next}x (applied live)");
                             }
                         }
                     }

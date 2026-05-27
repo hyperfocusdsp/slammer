@@ -370,18 +370,27 @@ pub fn collect_kick_params(p: &NinerParams) -> KickParams {
     }
 }
 
+/// Base editor size in logical pixels at 1x. The UI-scale control multiplies
+/// this (see `ui::editor`); the layout always draws into this fixed space and
+/// egui's zoom factor renders it larger, so nothing reflows.
+pub const BASE_WINDOW_SIZE: (u32, u32) = (680, 444);
+
 impl Default for NinerParams {
     fn default() -> Self {
-        // EguiState size is the LOGICAL window size. Actual on-screen scaling
-        // is applied by baseview's WindowScalePolicy — for standalone the
-        // launcher passes `--dpi-scale N` (read from `ui_scale.txt`); DAW
-        // hosts call `Editor::set_scale_factor`. Multiplying the logical
-        // size by the scale here would double-scale (window grows, content
-        // doesn't). Mirrors the squelchbox approach.
+        // The window opens at the saved UI scale. Baseview's native scale is
+        // pinned to 1.0 (DAW hosts default to it; the standalone launcher
+        // passes `--dpi-scale 1.0`), so the editor drives all scaling itself
+        // via egui's zoom factor plus a matching window resize (see
+        // `ui::editor`). Opening pre-scaled here avoids a first-frame resize
+        // flash; the editor keeps the window in sync when the badge changes.
         let ui_scale = crate::util::paths::load_ui_scale();
+        let (bw, bh) = BASE_WINDOW_SIZE;
 
         Self {
-            editor_state: EguiState::from_size(680, 444),
+            editor_state: EguiState::from_size(
+                (bw as f32 * ui_scale).round() as u32,
+                (bh as f32 * ui_scale).round() as u32,
+            ),
 
             seq_steps: Arc::new(Mutex::new(DEFAULT_STEP_BITS)),
             seq_accents: Arc::new(Mutex::new(DEFAULT_ACCENT_BITS)),
